@@ -1,0 +1,547 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+
+import 'flutter_config_notification_plugins_platform_interface.dart';
+import 'src/local_notification_models.dart';
+
+/// An implementation of [FlutterConfigNotificationPluginsPlatform] that uses method channels.
+class MethodChannelFlutterConfigNotificationPlugins
+    extends FlutterConfigNotificationPluginsPlatform {
+  /// The method channel used to interact with the native platform.
+  @visibleForTesting
+  final methodChannel = const MethodChannel(
+    'flutter_config_notification_plugins',
+  );
+
+  ValueChanged<LocalNotificationEvent>? onNotificationDisplayed;
+  ValueChanged<LocalNotificationEvent>? onNotificationClicked;
+  VoidCallback? onProcessingOverlayClicked;
+  ValueChanged<TimerOverlayClickEvent>? onTimerOverlayClicked;
+
+  /// 通知原生层进度悬浮窗点击监听已经就绪，并补发待处理点击。
+  Future<void> setProcessingOverlayClickListenerReady() {
+    return methodChannel.invokeMethod<void>(
+      'setProcessingOverlayClickListenerReady',
+      {'ready': true},
+    );
+  }
+
+  MethodChannelFlutterConfigNotificationPlugins() {
+    methodChannel.setMethodCallHandler(_handleMethodCall);
+  }
+
+  /// 通过原生通道获取平台版本。
+  @override
+  Future<String?> getPlatformVersion() async {
+    final version = await methodChannel.invokeMethod<String>(
+      'getPlatformVersion',
+    );
+    return version;
+  }
+
+  /// 通过原生通道加密反射字符串。
+  @override
+  Future<String> encryptReflectionString({
+    required String secret,
+    required String value,
+  }) async {
+    final result = await methodChannel.invokeMethod<String>(
+      'encryptReflectionString',
+      {'secret': secret, 'value': value},
+    );
+    return result ?? '';
+  }
+
+  /// 通过原生通道解密反射字符串。
+  @override
+  Future<String> decryptReflectionString({
+    required String secret,
+    required String value,
+  }) async {
+    final result = await methodChannel.invokeMethod<String>(
+      'decryptReflectionString',
+      {'secret': secret, 'value': value},
+    );
+    return result ?? '';
+  }
+
+  /// 通过原生通道按 payload 取出并清空已展示通知数量。
+  @override
+  Future<int> consumeDisplayedNotificationCount({
+    required String payload,
+  }) async {
+    final result = await methodChannel.invokeMethod<int>(
+      'consumeDisplayedNotificationCount',
+      {'payload': payload},
+    );
+    return result ?? 0;
+  }
+
+  @override
+  Future<void> configureNativePushReporting({
+    required bool enabled,
+    required String url,
+    required Map<String, String> headers,
+    required Map<String, Object?> payloadTemplate,
+    required String distinctIdKey,
+    required String logIdKey,
+    required String clientTsKey,
+    required String notificationSourceKey,
+    required String packageKey,
+  }) {
+    return methodChannel.invokeMethod<void>('configureNativePushReporting', {
+      'enabled': enabled,
+      'url': url,
+      'headers': headers,
+      'payloadTemplate': payloadTemplate,
+      'distinctIdKey': distinctIdKey,
+      'logIdKey': logIdKey,
+      'clientTsKey': clientTsKey,
+      'notificationSourceKey': notificationSourceKey,
+      'packageKey': packageKey,
+    });
+  }
+
+  @override
+  Future<void> startSessionBackground({
+    required bool enabled,
+    required String url,
+    required Map<String, String> headers,
+    required Map<String, Object?> payloadTemplate,
+    required String distinctIdKey,
+    required String logIdKey,
+    required String clientTsKey,
+    required String packageKey,
+  }) {
+    return methodChannel.invokeMethod<void>('startSessionBackground', {
+      'enabled': enabled,
+      'url': url,
+      'headers': headers,
+      'payloadTemplate': payloadTemplate,
+      'distinctIdKey': distinctIdKey,
+      'logIdKey': logIdKey,
+      'clientTsKey': clientTsKey,
+      'packageKey': packageKey,
+    });
+  }
+
+  /// 通过原生通道检查悬浮层权限。
+  @override
+  Future<bool> checkOverlayPermission() async {
+    final result = await methodChannel.invokeMethod<bool>(
+      'checkOverlayPermission',
+    );
+    return result ?? false;
+  }
+
+  /// 通过原生通道请求悬浮层权限。
+  @override
+  Future<bool> requestOverlayPermission({
+    String? title,
+    String? desc,
+    String? overlayPermissionGuideLayout,
+  }) async {
+    final result = await methodChannel
+        .invokeMethod<bool>('requestOverlayPermission', {
+          'title': title,
+          'desc': desc,
+          'overlayPermissionGuideLayout': overlayPermissionGuideLayout,
+        });
+    return result ?? false;
+  }
+
+  /// 通过原生通道显示悬浮进度层。
+  @override
+  Future<void> showProcessingOverlay({
+    required String taskId,
+    required String title,
+    required double progress,
+    required ProcessingOverlayReflectionConfig reflectionConfig,
+  }) {
+    return methodChannel.invokeMethod<void>('showProcessingOverlay', {
+      'taskId': taskId,
+      'title': title,
+      'progress': progress,
+      'reflectionConfig': reflectionConfig.toMap(),
+    });
+  }
+
+  /// 通过原生通道更新悬浮进度层。
+  @override
+  Future<void> updateProcessingOverlay({
+    required String taskId,
+    required String title,
+    required double progress,
+  }) {
+    return methodChannel.invokeMethod<void>('updateProcessingOverlay', {
+      'taskId': taskId,
+      'title': title,
+      'progress': progress,
+    });
+  }
+
+  /// 通过原生通道关闭悬浮进度层。
+  @override
+  Future<void> closeProcessingOverlay() {
+    return methodChannel.invokeMethod<void>('closeProcessingOverlay');
+  }
+
+  /// 通过原生通道关闭当前显示的定时悬浮窗。
+  @override
+  Future<void> closeTimerOverlay() {
+    return methodChannel.invokeMethod<void>('closeTimerOverlay');
+  }
+
+  /// 通过原生通道停止保活前台服务，准备验证 FCM 拉起。
+  @override
+  Future<void> stopKeepAliveForegroundServiceForFcmTest() {
+    return methodChannel.invokeMethod<void>(
+      'stopKeepAliveForegroundServiceForFcmTest',
+    );
+  }
+
+  /// 通过原生通道设置定时悬浮窗信息。
+  @override
+  Future<void> setTimerOverlayInfo({
+    required String layoutName,
+    required List<Map<String, Object?>> contentList,
+    required int closeOverlayProbability,
+    String? layoutName2,
+    List<Map<String, Object?>>? contentList2,
+    List<Map<String, Object?>>? contentList3,
+    required String continueReadingStr,
+    required String lastPdfSubtitleTemplate,
+    required String lastPdfButtonText,
+    required Map<String, Object?> reflectionConfig,
+    Duration timerInterval = const Duration(minutes: 20),
+  }) {
+    return methodChannel.invokeMethod<void>('setTimerOverlayInfo', {
+      'layoutName': layoutName,
+      'contentList': contentList,
+      'closeOverlayProbability': closeOverlayProbability,
+      'layoutName2': layoutName2,
+      'contentList2': contentList2,
+      'contentList3': contentList3,
+      'continueReadingStr': continueReadingStr,
+      'lastPdfSubtitleTemplate': lastPdfSubtitleTemplate,
+      'lastPdfButtonText': lastPdfButtonText,
+      'reflectionConfig': reflectionConfig,
+      'timerIntervalMilliseconds': timerInterval.inMilliseconds,
+    });
+  }
+
+  /// 通过原生通道更新悬浮窗关闭按钮真正关闭的概率。
+  @override
+  Future<void> updateCloseOverlayProbability({
+    required int closeOverlayProbability,
+  }) {
+    return methodChannel.invokeMethod<void>('updateCloseOverlayProbability', {
+      'closeOverlayProbability': closeOverlayProbability,
+    });
+  }
+
+  /// 通过原生通道更新定时悬浮窗信息。
+  @override
+  Future<void> updateTimerOverlayInfo({
+    required Duration timerInterval,
+    int? oneDayMaxCount,
+    int? cdTime,
+  }) {
+    return methodChannel.invokeMethod<void>('updateTimerOverlayInfo', {
+      'timerIntervalMilliseconds': timerInterval.inMilliseconds,
+      'oneDayMaxCount': oneDayMaxCount,
+      'cdTime': cdTime,
+    });
+  }
+
+  /// 通过原生通道更新是否在通知触发前显示媒体通知。
+  @override
+  Future<void> updateShowMediaTag({required bool showMedia}) {
+    return methodChannel.invokeMethod<void>('updateShowMediaTag', {
+      'showMedia': showMedia,
+    });
+  }
+
+  /// 通过原生通道暂停定时悬浮窗。
+  @override
+  Future<void> pauseTimerOverlay() {
+    return methodChannel.invokeMethod<void>('pauseTimerOverlay');
+  }
+
+  /// 通过原生通道恢复定时悬浮窗。
+  @override
+  Future<void> resumeTimerOverlay() {
+    return methodChannel.invokeMethod<void>('resumeTimerOverlay');
+  }
+
+  /// 通过原生通道记录定时悬浮窗可使用的最近 PDF 阅读位置。
+  @override
+  Future<void> setTimerOverlayLastPdfInfo({
+    required String title,
+    required int pageNumber,
+  }) {
+    return methodChannel.invokeMethod<void>('setTimerOverlayLastPdfInfo', {
+      'title': title,
+      'pageNumber': pageNumber,
+    });
+  }
+
+  /// 通过原生通道配置系统相册新增图片/截图通知。
+  @override
+  Future<void> setGalleryImageNotificationInfo({required String title}) {
+    return methodChannel.invokeMethod<void>('setGalleryImageNotificationInfo', {
+      'title': title,
+    });
+  }
+
+  /// 通过原生通道取出并清空定时悬浮窗点击事件。
+  @override
+  Future<Map<String, dynamic>?> consumeTimerOverlayClickEvent() {
+    return methodChannel.invokeMapMethod<String, dynamic>(
+      'consumeTimerOverlayClickEvent',
+    );
+  }
+
+  /// 通过原生通道查询悬浮进度层状态。
+  @override
+  Future<bool> isProcessingOverlayActive() async {
+    final result = await methodChannel.invokeMethod<bool>(
+      'isProcessingOverlayActive',
+    );
+    return result ?? false;
+  }
+
+  /// 通过原生通道取出悬浮层启动任务 ID。
+  @override
+  Future<String?> consumeProcessingOverlayLaunchTaskId() {
+    return methodChannel.invokeMethod<String>(
+      'consumeProcessingOverlayLaunchTaskId',
+    );
+  }
+
+  /// 通过原生通道将应用切到后台。
+  @override
+  Future<bool> moveAppToBack() async {
+    final result = await methodChannel.invokeMethod<bool>('moveAppToBack');
+    return result ?? false;
+  }
+
+  /// 通过原生通道判断当前手机是否为三星。
+  @override
+  Future<bool> isSamsungDevice() async {
+    final result = await methodChannel.invokeMethod<bool>('isSamsungDevice');
+    return result ?? false;
+  }
+
+  /// 通过原生通道判断当前手机语言或地区是否为韩国。
+  @override
+  Future<bool> isKoreanLocale() async {
+    final result = await methodChannel.invokeMethod<bool>('isKoreanLocale');
+    return result ?? false;
+  }
+
+  /// 通过原生通道配置 Android 的 WorkManager 循环间隔。
+  @override
+  Future<void> configureAndroidWorkManager({
+    Duration interval = const Duration(minutes: 60),
+  }) {
+    return methodChannel.invokeMethod<void>('configureAndroidWorkManager', {
+      'intervalMilliseconds': interval.inMilliseconds,
+    });
+  }
+
+  /// 通过原生通道获取通知启动信息。
+  @override
+  Future<Map<String, dynamic>> getNotificationAppLaunchDetails() async {
+    final result = await methodChannel.invokeMapMethod<String, dynamic>(
+      'getNotificationAppLaunchDetails',
+    );
+    return result ?? <String, dynamic>{'didNotificationLaunchApp': false};
+  }
+
+  /// 通过原生通道订阅 FCM 主题并保存配置。
+  @override
+  Future<bool> subscribeToTopic({
+    required String topic,
+    required String beautyImage,
+    required String channelId,
+    required String channelName,
+    String? channelDescription,
+    required int priority,
+    required int importance,
+    String? style,
+    String? beautyTitle,
+    String? beautyBody,
+    String? beautyButton,
+    String? beautyAppIcon,
+  }) async {
+    final result = await methodChannel.invokeMethod<bool>('subscribeToTopic', {
+      'topic': topic,
+      'channelId': channelId,
+      'channelName': channelName,
+      'channelDescription': channelDescription,
+      'priority': priority,
+      'importance': importance,
+      'style': style,
+      'beautyTitle': beautyTitle,
+      'beautyBody': beautyBody,
+      'beautyImage': beautyImage,
+      'beautyButton': beautyButton,
+      'beautyAppIcon': beautyAppIcon,
+    });
+    return result ?? false;
+  }
+
+  /// 通过原生通道初始化通知配置。
+  @override
+  Future<bool> initNotification({
+    required Map<String, Object?> notificationConfig,
+    String channelId = 'default_notification_channel',
+    String channelName = 'Notifications',
+    String? channelDescription,
+    String? icon,
+    bool showMedia = true,
+    Map<String, Object?>? customLayout,
+  }) async {
+    final result = await methodChannel.invokeMethod<bool>('initNotification', {
+      'channelId': channelId,
+      'channelName': channelName,
+      'channelDescription': channelDescription,
+      'icon': icon,
+      'showMedia': showMedia,
+      'notificationConfig': notificationConfig,
+      'customLayout': customLayout,
+    });
+    return result ?? false;
+  }
+
+  /// 通过原生通道显示常驻快捷通知。
+  @override
+  Future<void> showPersistentShortcutNotification({
+    required String homeText,
+    required String mergeText,
+    required String importText,
+    required String convertText,
+    required String homeIcon,
+    required String mergeIcon,
+    required String importIcon,
+    required String convertIcon,
+    Map<String, Object?>? customLayout,
+  }) {
+    return methodChannel
+        .invokeMethod<void>('showPersistentShortcutNotification', {
+          'homeText': homeText,
+          'mergeText': mergeText,
+          'importText': importText,
+          'convertText': convertText,
+          'homeIcon': homeIcon,
+          'mergeIcon': mergeIcon,
+          'importIcon': importIcon,
+          'convertIcon': convertIcon,
+          'customLayout': customLayout,
+        });
+  }
+
+  /// 通过原生通道立即显示一条通知。
+  @override
+  Future<void> show({
+    required int id,
+    String? title,
+    String? body,
+    String? payload,
+    String? clickPayload,
+    String? mediaBackgroundImageName,
+    Map<String, Object?>? notificationDetails,
+    bool showOverlay = false,
+    bool showWhenAppForeground = false,
+  }) {
+    return methodChannel.invokeMethod<void>('show', {
+      'id': id,
+      'title': title,
+      'body': body,
+      'payload': payload ?? '',
+      'clickPayload': clickPayload,
+      'mediaBackgroundImageName': mediaBackgroundImageName,
+      'notificationDetails': notificationDetails,
+      'showOverlay': showOverlay,
+      'showWhenAppForeground': showWhenAppForeground,
+    });
+  }
+
+  /// 通过原生通道按时间间隔循环展示本地通知。
+  @override
+  Future<void> periodicallyShowLocalWithDuration({
+    required int id,
+    String? title,
+    String? body,
+    Map<String, Object?>? notificationDetails,
+    List<Map<String, Object?>>? notificationList,
+  }) {
+    return methodChannel
+        .invokeMethod<void>('periodicallyShowLocalWithDuration', {
+          'id': id,
+          'title': title,
+          'body': body,
+          'notificationDetails': notificationDetails,
+          'notificationList': notificationList,
+        });
+  }
+
+  /// 通过原生通道按时间间隔循环展示媒体通知。
+  @override
+  Future<void> periodicallyShowMediaWithDuration({
+    required int id,
+    String? title,
+    String? body,
+    String? mediaBackgroundImageName,
+    Map<String, Object?>? notificationDetails,
+    required List<Map<String, Object?>> notificationList,
+    required Map<String, Object?> reflectionConfig,
+  }) {
+    return methodChannel
+        .invokeMethod<void>('periodicallyShowMediaWithDuration', {
+          'id': id,
+          'title': title,
+          'body': body,
+          'mediaBackgroundImageName': mediaBackgroundImageName,
+          'notificationDetails': notificationDetails,
+          'notificationList': notificationList,
+          'reflectionConfig': reflectionConfig,
+        });
+  }
+
+  /// 通过原生通道注册广播触发通知。
+  @override
+  Future<void> registerBroadcastNotifications({
+    List<Map<String, Object?>>? notificationList,
+    required List<String> payloadList,
+  }) {
+    return methodChannel.invokeMethod<void>('registerBroadcastNotifications', {
+      'notificationList': notificationList,
+      'payloadList': payloadList,
+    });
+  }
+
+  /// 处理原生层主动回传的方法调用。
+  Future<void> _handleMethodCall(MethodCall call) async {
+    switch (call.method) {
+      case 'onNotificationDisplayed':
+        final args = (call.arguments as Map?) ?? <dynamic, dynamic>{};
+        onNotificationDisplayed?.call(LocalNotificationEvent.fromMap(args));
+        break;
+      case 'onNotificationClicked':
+        final args = (call.arguments as Map?) ?? <dynamic, dynamic>{};
+        onNotificationClicked?.call(LocalNotificationEvent.fromMap(args));
+        break;
+      case 'onProcessingOverlayClicked':
+        onProcessingOverlayClicked?.call();
+        break;
+      case 'onTimerOverlayClicked':
+        final args = (call.arguments as Map?) ?? <dynamic, dynamic>{};
+        onTimerOverlayClicked?.call(TimerOverlayClickEvent.fromMap(args));
+        break;
+      default:
+        break;
+    }
+  }
+}
