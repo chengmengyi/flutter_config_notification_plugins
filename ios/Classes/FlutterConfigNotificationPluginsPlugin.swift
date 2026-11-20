@@ -60,22 +60,9 @@ public class FlutterConfigNotificationPluginsPlugin: NSObject, FlutterPlugin, UN
   }
 
   private func initNotification(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-    let args = call.arguments as? [String: Any]
-    channelId = args?["channelId"] as? String ?? defaultChannelId
-    channelName = args?["channelName"] as? String ?? defaultChannelName
-    channelDescription = args?["channelDescription"] as? String ?? defaultChannelDescription
-    let center = UNUserNotificationCenter.current()
-    center.delegate = self
-    center.getNotificationSettings { settings in
-      DispatchQueue.main.async {
-        let status = settings.authorizationStatus
-        let granted =
-          status == .authorized ||
-          status == .provisional ||
-          status == .ephemeral
-        result(granted)
-      }
-    }
+    // 远程通知配置目前只在 Android 原生层实现。不能在未拉取配置时
+    // 返回成功，否则调用方会错误地继续初始化后续通知功能。
+    result(false)
   }
 
   private func show(_ call: FlutterMethodCall, result: @escaping FlutterResult) {

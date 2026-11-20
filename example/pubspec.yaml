@@ -17,6 +17,7 @@ dependencies:
   flutter:
     sdk: flutter
 
+  flutter_tba_info_new: 0.0.3
   flutter_config_notification_plugins:
     # When depending on this package from a real application you should use:
     #   flutter_config_notification_plugins: ^x.y.z

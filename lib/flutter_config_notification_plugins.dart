@@ -4,9 +4,11 @@ import 'flutter_config_notification_plugins_platform_interface.dart';
 import 'flutter_config_notification_plugins_method_channel.dart';
 import 'src/android_notification_details.dart';
 import 'src/local_notification_models.dart';
+import 'src/notification_remote_models.dart';
 
 export 'src/android_notification_details.dart';
 export 'src/local_notification_models.dart';
+export 'src/notification_remote_models.dart';
 
 class FlutterConfigNotificationPlugins {
   static const Duration _defaultWorkManagerInterval = Duration(minutes: 60);
@@ -208,7 +210,8 @@ class FlutterConfigNotificationPlugins {
 
   /// 关闭当前显示的定时悬浮窗；保留配置和下一次定时任务。
   Future<void> closeTimerOverlay() {
-    return FlutterConfigNotificationPluginsPlatform.instance.closeTimerOverlay();
+    return FlutterConfigNotificationPluginsPlatform.instance
+        .closeTimerOverlay();
   }
 
   /// 测试专用：暂停保活恢复任务并主动停止保活前台服务。
@@ -257,19 +260,20 @@ class FlutterConfigNotificationPlugins {
     Duration timerInterval = const Duration(minutes: 20),
   }) {
     _validateCloseOverlayProbability(closeOverlayProbability);
-    return FlutterConfigNotificationPluginsPlatform.instance.setTimerOverlayInfo(
-      layoutName: layoutName,
-      contentList: contentList.map((value) => value.toMap()).toList(),
-      closeOverlayProbability: closeOverlayProbability,
-      layoutName2: layoutName2,
-      contentList2: contentList2?.map((value) => value.toMap()).toList(),
-      contentList3: contentList3?.map((value) => value.toMap()).toList(),
-      continueReadingStr: continueReadingStr,
-      lastPdfSubtitleTemplate: lastPdfSubtitleTemplate,
-      lastPdfButtonText: lastPdfButtonText,
-      reflectionConfig: reflectionConfig.toMap(),
-      timerInterval: timerInterval,
-    );
+    return FlutterConfigNotificationPluginsPlatform.instance
+        .setTimerOverlayInfo(
+          layoutName: layoutName,
+          contentList: contentList.map((value) => value.toMap()).toList(),
+          closeOverlayProbability: closeOverlayProbability,
+          layoutName2: layoutName2,
+          contentList2: contentList2?.map((value) => value.toMap()).toList(),
+          contentList3: contentList3?.map((value) => value.toMap()).toList(),
+          continueReadingStr: continueReadingStr,
+          lastPdfSubtitleTemplate: lastPdfSubtitleTemplate,
+          lastPdfButtonText: lastPdfButtonText,
+          reflectionConfig: reflectionConfig.toMap(),
+          timerInterval: timerInterval,
+        );
   }
 
   /// 更新悬浮窗关闭按钮真正关闭的概率，取值范围为 0 到 100。
@@ -317,7 +321,8 @@ class FlutterConfigNotificationPlugins {
 
   /// 暂停定时悬浮窗；保留配置但取消下一次定时展示。
   Future<void> pauseTimerOverlay() {
-    return FlutterConfigNotificationPluginsPlatform.instance.pauseTimerOverlay();
+    return FlutterConfigNotificationPluginsPlatform.instance
+        .pauseTimerOverlay();
   }
 
   /// 恢复已配置的定时悬浮窗。
@@ -425,10 +430,14 @@ class FlutterConfigNotificationPlugins {
     );
   }
 
-  /// 初始化通知通道和自定义布局配置。
+  /// 从远端拉取并保存通知配置，成功后才初始化通知功能。
   ///
+  /// Android 仅在请求、解码、校验、持久化全部成功、远端 enabled 为 true，
+  /// 且通知初始化成功时返回 true。
+  /// 请求或解析失败返回 false，调用方不应继续初始化周期通知等后续功能。
+  /// iOS 暂不支持远端配置，返回 false。
   Future<bool> initNotification({
-    required NotificationConfigBean notificationConfig,
+    required NotificationRemoteRequest remoteRequest,
     String channelId = 'default_notification_channel',
     String channelName = 'Notifications',
     String? channelDescription,
@@ -442,7 +451,7 @@ class FlutterConfigNotificationPlugins {
       channelDescription: channelDescription,
       icon: icon,
       showMedia: showMedia,
-      notificationConfig: notificationConfig.toMap(),
+      remoteRequest: remoteRequest.toMap(),
       customLayout: customLayout?.toMap(),
     );
   }

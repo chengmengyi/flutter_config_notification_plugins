@@ -48,6 +48,7 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Locale
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.crypto.Cipher
@@ -2210,10 +2211,10 @@ class FlutterConfigNotificationPluginsPlugin :
     private var lifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
     private var lifecycleHandler: Handler? = null
     private var pendingBackgroundRunnable: Runnable? = null
+    private val remoteConfigExecutor = Executors.newSingleThreadExecutor()
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         applicationContext = flutterPluginBinding.applicationContext
-        InProcessTimerManager.start(applicationContext)
         registerHostActivityLifecycleCallbacks()
         channel =
             MethodChannel(
@@ -2222,7 +2223,6 @@ class FlutterConfigNotificationPluginsPlugin :
             )
         channel.setMethodCallHandler(this)
         notificationEventChannel = channel
-        registerUnlockReceiverIfNeeded()
     }
 
     override fun onMethodCall(
@@ -2696,17 +2696,47 @@ class FlutterConfigNotificationPluginsPlugin :
         call: MethodCall,
         result: Result,
     ) {
-        val notificationConfig =
+        val remoteRequest =
             try {
-                NotificationConfigStore.save(
-                    applicationContext,
-                    call.argument<Map<String, Any?>>("notificationConfig")
-                        ?: throw IllegalArgumentException("notificationConfig is required"),
+                RemoteNotificationRequest.fromMap(
+                    call.argument<Map<String, Any?>>("remoteRequest")
+                        ?: throw IllegalArgumentException("remoteRequest is required"),
                 )
-            } catch (error: IllegalArgumentException) {
-                result.error("invalid_notification_config", error.message, null)
+            } catch (error: Exception) {
+                result.success(false)
                 return
             }
+        remoteConfigExecutor.execute {
+            val remoteConfig =
+                RemoteNotificationConfigStore.fetchDecodeAndSave(
+                    applicationContext,
+                    remoteRequest,
+                )
+            Handler(Looper.getMainLooper()).post {
+                if (remoteConfig == null) {
+                    result.success(false)
+                    return@post
+                }
+                if (!remoteConfig.notification.getBoolean("enabled")) {
+                    result.success(false)
+                    return@post
+                }
+                try {
+                    initializeNotificationAfterRemoteConfig(call, remoteConfig)
+                    result.success(true)
+                } catch (error: Exception) {
+                    result.success(false)
+                }
+            }
+        }
+    }
+
+    private fun initializeNotificationAfterRemoteConfig(
+        call: MethodCall,
+        remoteConfig: DecodedRemoteNotificationConfig,
+    ) {
+        InProcessTimerManager.start(applicationContext)
+        registerUnlockReceiverIfNeeded()
         channelId = call.argument<String>("channelId") ?: DEFAULT_CHANNEL_ID
         channelName = call.argument<String>("channelName") ?: DEFAULT_CHANNEL_NAME
         channelDescription =
@@ -2734,11 +2764,11 @@ class FlutterConfigNotificationPluginsPlugin :
         )
         LocalNotificationScheduler.updateAllIntervals(
             applicationContext,
-            notificationConfig.localIntervalMillis,
+            remoteConfig.notification.getLong("notification_interval_minutes") * 60_000L,
         )
         KeepAliveNotificationHelper.updateLocalInterval(
             applicationContext,
-            notificationConfig.localIntervalMillis,
+            remoteConfig.notification.getLong("notification_interval_minutes") * 60_000L,
         )
         KeepAliveNotificationHelper.scheduleShortMonitorJob(
             applicationContext,
@@ -2746,7 +2776,6 @@ class FlutterConfigNotificationPluginsPlugin :
         )
         KeepAliveNotificationHelper.scheduleLongPatrolJob(applicationContext)
         KeepAliveNotificationHelper.scheduleKeepAliveWork(applicationContext)
-        result.success(true)
     }
 
     private fun configureAndroidWorkManager(
@@ -3071,6 +3100,7 @@ class FlutterConfigNotificationPluginsPlugin :
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         notificationEventChannel = null
         channel.setMethodCallHandler(null)
+        remoteConfigExecutor.shutdownNow()
         unregisterHostActivityLifecycleCallbacks()
     }
 

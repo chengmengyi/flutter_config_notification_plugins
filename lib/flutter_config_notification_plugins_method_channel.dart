@@ -395,7 +395,7 @@ class MethodChannelFlutterConfigNotificationPlugins
   /// 通过原生通道初始化通知配置。
   @override
   Future<bool> initNotification({
-    required Map<String, Object?> notificationConfig,
+    required Map<String, Object?> remoteRequest,
     String channelId = 'default_notification_channel',
     String channelName = 'Notifications',
     String? channelDescription,
@@ -409,7 +409,7 @@ class MethodChannelFlutterConfigNotificationPlugins
       'channelDescription': channelDescription,
       'icon': icon,
       'showMedia': showMedia,
-      'notificationConfig': notificationConfig,
+      'remoteRequest': remoteRequest,
       'customLayout': customLayout,
     });
     return result ?? false;

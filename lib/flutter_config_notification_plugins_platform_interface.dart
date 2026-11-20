@@ -291,7 +291,7 @@ abstract class FlutterConfigNotificationPluginsPlatform
 
   /// 初始化通知通道和自定义布局配置。
   Future<bool> initNotification({
-    required Map<String, Object?> notificationConfig,
+    required Map<String, Object?> remoteRequest,
     String channelId = 'default_notification_channel',
     String channelName = 'Notifications',
     String? channelDescription,
