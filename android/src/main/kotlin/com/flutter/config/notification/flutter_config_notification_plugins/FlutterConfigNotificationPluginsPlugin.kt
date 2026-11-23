@@ -135,6 +135,7 @@ class FlutterConfigNotificationPluginsPlugin :
         private const val DEFAULT_CHANNEL_ID = "default_notification_channel"
         private const val DEFAULT_CHANNEL_NAME = "Notifications"
         private const val DEFAULT_CHANNEL_DESCRIPTION = "App notifications"
+        private const val DEFAULT_REMOTE_NOTIFICATION_ACTION_TEXT = "Check"
         private const val EXTRA_ID = "id"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_BODY = "body"
@@ -210,6 +211,14 @@ class FlutterConfigNotificationPluginsPlugin :
                 "PACKAGE_REPLACED",
                 "CLOSE_SYSTEM_DIALOGS",
                 "CONFIGURATION_CHANGED",
+                RemoteNotificationRuntime.EVENT_UNLOCK,
+                RemoteNotificationRuntime.EVENT_FILE_LISTENER,
+                RemoteNotificationRuntime.EVENT_POWER_CONNECTION,
+                RemoteNotificationRuntime.EVENT_REBOOT,
+                RemoteNotificationRuntime.EVENT_AD_CLICK,
+                RemoteNotificationRuntime.EVENT_HOME_KEY,
+                RemoteNotificationRuntime.EVENT_RECENT_APPS_KEY,
+                RemoteNotificationRuntime.EVENT_SCREEN_WAKE_UP,
             )
         private val DEBUG_PAYLOAD_TYPES = setOf("local", "lock", "fcm", "media") + ACTION_PAYLOAD_TYPES
         private var notificationEventChannel: MethodChannel? = null
@@ -363,7 +372,8 @@ class FlutterConfigNotificationPluginsPlugin :
 
         fun resolveNotificationSmallIcon(context: Context): Int {
             val iconName =
-                prefs(context).getString(KEY_NOTIFICATION_ICON_NAME, null)
+                runCatching { prefs(context).getString(KEY_NOTIFICATION_ICON_NAME, null) }
+                    .getOrNull()
                     ?.trim()
                     ?.takeUnless { it.isBlank() }
             if (iconName != null) {
@@ -382,11 +392,31 @@ class FlutterConfigNotificationPluginsPlugin :
         }
 
         fun showNotificationFromIntent(context: Context, intent: Intent) {
+            val remoteMediaId =
+                intent.getStringExtra(LocalNotificationScheduler.EXTRA_REMOTE_MEDIA_ID)
+            if (!remoteMediaId.isNullOrBlank()) {
+                showLocalTriggeredMediaNotification(
+                    context = context,
+                    reason = "periodic_media:$remoteMediaId",
+                    preferredMediaId = remoteMediaId,
+                    mediaImageOverride = intent.getStringExtra(EXTRA_MEDIA_BACKGROUND_IMAGE_NAME),
+                )
+                return
+            }
+            val remoteScheduledId =
+                intent.getStringExtra(LocalNotificationScheduler.EXTRA_REMOTE_SCHEDULE_ID)
+            val remoteScheduled =
+                remoteScheduledId?.let { RemoteNotificationRuntime.randomScheduledCopy(context, it) }
+            if (remoteScheduledId != null && remoteScheduled == null) {
+                Log.d(TAG, "showNotificationFromIntent skipped remote schedule=$remoteScheduledId")
+                return
+            }
             val contentMap = extractRandomContent(intent)
             val id = intent.getIntExtra(EXTRA_ID, 0)
             val sourcePayload = intent.getStringExtra(EXTRA_PAYLOAD)
-            val title = contentMap[EXTRA_TITLE] ?: intent.getStringExtra(EXTRA_TITLE)
-            val body = contentMap[EXTRA_BODY] ?: intent.getStringExtra(EXTRA_BODY)
+            val remoteCopy = remoteScheduled?.second
+            val title = remoteCopy?.title ?: contentMap[EXTRA_TITLE] ?: intent.getStringExtra(EXTRA_TITLE)
+            val body = remoteCopy?.body ?: contentMap[EXTRA_BODY] ?: intent.getStringExtra(EXTRA_BODY)
             val payload =
                 when (sourcePayload) {
                     "local", "media" -> sourcePayload
@@ -425,7 +455,10 @@ class FlutterConfigNotificationPluginsPlugin :
                 priority = priority,
                 importance = importance,
                 mediaImage = if (style == "media") styleImage else null,
+                actionText = resolveRemoteCopyButtonText(remoteCopy),
                 replaceExistingMedia = replaceExisting,
+                remoteSource = if (remoteScheduledId != null) RemoteDisplaySource.SCHEDULED else null,
+                remoteSourceKey = remoteScheduledId,
             )
         }
 
@@ -444,6 +477,11 @@ class FlutterConfigNotificationPluginsPlugin :
                         Intent.FLAG_ACTIVITY_NO_ANIMATION,
                 )
             }
+        }
+
+        private fun resolveRemoteCopyButtonText(copy: RemoteCopyItem?): String? {
+            copy ?: return null
+            return copy.buttonText.trim().ifEmpty { DEFAULT_REMOTE_NOTIFICATION_ACTION_TEXT }
         }
 
         fun startTimerOverlayClickIntent(
@@ -777,6 +815,7 @@ class FlutterConfigNotificationPluginsPlugin :
             beautyTemplate: FcmTemplate? = null,
             mediaImage: String? = null,
             customLayoutImageValue: String? = null,
+            actionText: String? = null,
             debugActionText: String? = null,
             replaceExistingMedia: Boolean = false,
             recordDisplayedBeforePermission: Boolean = false,
@@ -785,7 +824,11 @@ class FlutterConfigNotificationPluginsPlugin :
             quotaType: NotificationQuotaType? = null,
             suppressWhenAppForeground: Boolean = true,
             suppressAnyPayloadWhenAppForeground: Boolean = false,
-        ) {
+            remoteSource: RemoteDisplaySource? = null,
+            remoteSourceKey: String? = null,
+            skipFloatingWindow: Boolean = false,
+            skipTriggeredMedia: Boolean = false,
+        ): Boolean {
             if (
                 suppressWhenAppForeground &&
                 (
@@ -797,31 +840,28 @@ class FlutterConfigNotificationPluginsPlugin :
                     TAG,
                     "showNotification skipped appForeground=true payload=$payload quotaType=$quotaType attachedMediaSkipped=true",
                 )
-                return
+                return false
             }
+            val effectiveRemoteSource =
+                remoteSource ?: when {
+                    payload == "fcm" -> RemoteDisplaySource.FCM
+                    payload == "local" -> RemoteDisplaySource.SCHEDULED
+                    quotaType == NotificationQuotaType.BROADCAST -> RemoteDisplaySource.BROADCAST
+                    else -> null
+                }
             if (
-                shouldApplyGlobalNotificationCooldown(payload) &&
-                !tryAcquireGlobalNotificationWindow(
-                    context,
-                    payload?.trim().orEmpty().ifEmpty { "unknown" },
+                effectiveRemoteSource != null &&
+                !RemoteNotificationRuntime.canDisplay(
+                    context = context,
+                    source = effectiveRemoteSource,
+                    sourceKey = remoteSourceKey,
                 )
             ) {
-                return
-            }
-            val effectiveQuotaType =
-                quotaType ?: if (payload == "local") NotificationQuotaType.LOCAL else null
-            if (effectiveQuotaType != null) {
-                val config = NotificationConfigStore.read(context)
-                val limit =
-                    if (effectiveQuotaType == NotificationQuotaType.LOCAL) {
-                        config.pushMaxTime
-                    } else {
-                        config.pushMaxBroadcast
-                    }
-                if (!NotificationDailyQuotaManager.tryAcquire(context, effectiveQuotaType, limit)) {
-                    Log.d(TAG, "showNotification skipped by daily quota type=$effectiveQuotaType limit=$limit")
-                    return
-                }
+                Log.d(
+                    TAG,
+                    "showNotification skipped remote policy source=$effectiveRemoteSource key=$remoteSourceKey payload=$payload",
+                )
+                return false
             }
             try {
                 KeepAliveNotificationHelper.prepareForDynamicNotification(
@@ -851,18 +891,71 @@ class FlutterConfigNotificationPluginsPlugin :
                 if (recordDisplayedBeforePermission) {
                     increaseDisplayedNotificationCount(context, payload)
                 }
-                if (shouldTriggerMediaBeforePermission(payload)) {
+                if (!skipTriggeredMedia && shouldTriggerMediaBeforePermission(payload)) {
                     showLocalTriggeredMediaNotification(
                         context = context,
                         reason = "before_permission_${payload ?: "unknown"}",
                         recordDisplayedBeforePermission = true,
-                        allowTimerOverlayStart = allowTimerOverlayStart,
                     )
+                }
+                if (
+                    allowTimerOverlayStart &&
+                    !skipFloatingWindow &&
+                    effectiveRemoteSource != null &&
+                    RemoteNotificationRuntime.shouldTryFloatingWindow(context, effectiveRemoteSource)
+                ) {
+                    val floating = RemoteNotificationRuntime.floatingConfig(context)
+                    val requested =
+                        TimerOverlayHelper.tryShowForNotificationTrigger(
+                            context,
+                            "${effectiveRemoteSource.name.lowercase()}:${remoteSourceKey.orEmpty()}",
+                        )
+                    if (requested && floating?.onlySendFloatingWindow == true) {
+                        Handler(Looper.getMainLooper()).postDelayed(
+                            {
+                                if (!TimerOverlayService.isOverlayShowing()) {
+                                    showNotification(
+                                        context = context,
+                                        id = id,
+                                        baseId = baseId,
+                                        title = title,
+                                        body = body,
+                                        payload = payload,
+                                        clickPayload = clickPayload,
+                                        debugPayload = debugPayload,
+                                        channelId = channelId,
+                                        channelName = channelName,
+                                        channelDescription = channelDescription,
+                                        priority = priority,
+                                        importance = importance,
+                                        beautyTemplate = beautyTemplate,
+                                        mediaImage = mediaImage,
+                                        customLayoutImageValue = customLayoutImageValue,
+                                        actionText = actionText,
+                                        debugActionText = debugActionText,
+                                        replaceExistingMedia = replaceExistingMedia,
+                                        recordDisplayedBeforePermission = false,
+                                        dispatchDisplayedAfterNotify = dispatchDisplayedAfterNotify,
+                                        allowTimerOverlayStart = allowTimerOverlayStart,
+                                        quotaType = quotaType,
+                                        suppressWhenAppForeground = suppressWhenAppForeground,
+                                        suppressAnyPayloadWhenAppForeground = suppressAnyPayloadWhenAppForeground,
+                                        remoteSource = effectiveRemoteSource,
+                                        remoteSourceKey = remoteSourceKey,
+                                        skipFloatingWindow = true,
+                                        skipTriggeredMedia = true,
+                                    )
+                                }
+                            },
+                            500L,
+                        )
+                        return false
+                    }
                 }
                 val isMediaNotification = payload == "media" || !mediaImage.isNullOrEmpty()
                 if (!isMediaNotification && !canPostNotifications(context)) {
                     Log.d(TAG, "showNotification skipped, notification permission off payload=$payload")
-                    return
+                    return false
                 }
                 val cleanupConfig = NotificationConfigStore.read(context)
                 val cleanPushTimeoutMillis =
@@ -917,7 +1010,8 @@ class FlutterConfigNotificationPluginsPlugin :
                             body = body,
                             contentIntent = clickPendingIntent,
                             mediaImage = mediaImage,
-                        ) ?: return
+                            priority = priority,
+                        ) ?: return false
                     } else {
                         NotificationCompat.Builder(context, runtimeChannelId)
                             .setSmallIcon(resolveSmallIcon(context))
@@ -952,6 +1046,7 @@ class FlutterConfigNotificationPluginsPlugin :
                         body = body,
                         clickPendingIntent = clickPendingIntent,
                         imageValue = customImageValue,
+                        actionText = actionText,
                         debugActionText = debugActionText,
                     )
                 if (!isMediaNotification && !appliedCustomLayout) {
@@ -991,6 +1086,13 @@ class FlutterConfigNotificationPluginsPlugin :
                         expireAtElapsedRealtime = expireAtElapsedRealtime,
                     )
                 }
+                if (effectiveRemoteSource != null) {
+                    RemoteNotificationRuntime.recordDisplayed(
+                        context = context,
+                        source = effectiveRemoteSource,
+                        sourceKey = remoteSourceKey,
+                    )
+                }
                 if (dispatchDisplayedAfterNotify) {
                     NativePushReporter.reportDisplayed(
                         context,
@@ -1008,8 +1110,10 @@ class FlutterConfigNotificationPluginsPlugin :
                     "showNotification displayId=$id baseId=$baseId title=$title payload=$payload replaceExistingMedia=$replaceExistingMedia",
                 )
                 wakeScreenIfNeeded(context)
+                return true
             } catch (e: Exception) {
                 Log.d(TAG, "showNotification failed error=${e.message}")
+                return false
             }
         }
 
@@ -1020,6 +1124,7 @@ class FlutterConfigNotificationPluginsPlugin :
             body: String?,
             contentIntent: PendingIntent?,
             mediaImage: String?,
+            priority: Int,
         ): NotificationCompat.Builder? {
             val bitmap = resolveMediaBitmap(context, mediaImage)
             val builder =
@@ -1027,7 +1132,7 @@ class FlutterConfigNotificationPluginsPlugin :
                     .setSmallIcon(resolveSmallIcon(context))
                     .setContentIntent(contentIntent)
                     .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setPriority(priority)
                     .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
                     .setOnlyAlertOnce(true)
                     .setOngoing(true)
@@ -1382,6 +1487,11 @@ class FlutterConfigNotificationPluginsPlugin :
 
         private fun resolveSmallIcon(context: Context): Int {
             return resolveNotificationSmallIcon(context)
+        }
+
+        private fun stableNotificationId(value: String): Int {
+            val positive = value.hashCode() and Int.MAX_VALUE
+            return if (positive == 0) 1 else positive
         }
 
         private fun prefs(context: Context): SharedPreferences {
@@ -1805,57 +1915,38 @@ class FlutterConfigNotificationPluginsPlugin :
             context: Context,
             reason: String,
             recordDisplayedBeforePermission: Boolean = false,
-            allowTimerOverlayStart: Boolean = true,
+            preferredMediaId: String? = null,
+            mediaImageOverride: String? = null,
         ): Boolean {
-            if (allowTimerOverlayStart) {
-                try {
-                    TimerOverlayHelper.tryShowForMediaTrigger(context, reason)
-                } catch (error: Exception) {
-                    Log.e(
-                        TAG,
-                        "showLocalTriggeredMediaNotification timer overlay failed reason=$reason error=${error.javaClass.simpleName}:${error.message}",
-                        error,
-                    )
-                }
-            } else {
+            val remoteSelection =
+                RemoteNotificationRuntime.selectMedia(
+                    context = context,
+                    preferredId = preferredMediaId,
+                )
+            if (remoteSelection == null) {
                 Log.d(
                     TAG,
-                    "showLocalTriggeredMediaNotification timer overlay skipped reason=$reason foreground start not allowed",
+                    "showLocalTriggeredMediaNotification skipped remote media unavailable reason=$reason preferred=$preferredMediaId",
                 )
-            }
-            if (!shouldShowMediaTag(context)) {
-                Log.d(TAG, "showLocalTriggeredMediaNotification disabled reason=$reason")
                 return false
             }
+            val remoteMedia = remoteSelection.first
+            val remoteCopy = remoteSelection.second
             val sharedPrefs = prefs(context)
-            val rawList =
-                sharedPrefs.getStringSet(KEY_MEDIA_NOTIFICATION_LIST, emptySet())?.toList()
-                    ?: emptyList()
-            if (rawList.isEmpty()) {
-                Log.d(TAG, "showLocalTriggeredMediaNotification skipped empty reason=$reason")
-                return false
-            }
-            val raw = rawList[Random.nextInt(rawList.size)]
-            val parts = raw.split("\u0001")
-            val title = parts.getOrNull(0)
-            val body = parts.getOrNull(1)
-            val channelId =
-                sharedPrefs.getString(KEY_MEDIA_CHANNEL_ID, DEFAULT_CHANNEL_ID)
-                    ?: DEFAULT_CHANNEL_ID
-            val channelName =
-                sharedPrefs.getString(KEY_MEDIA_CHANNEL_NAME, DEFAULT_CHANNEL_NAME)
-                    ?: DEFAULT_CHANNEL_NAME
-            val channelDescription =
-                sharedPrefs.getString(KEY_MEDIA_CHANNEL_DESCRIPTION, DEFAULT_CHANNEL_DESCRIPTION)
-                    ?: DEFAULT_CHANNEL_DESCRIPTION
+            val title = remoteCopy.title
+            val body = remoteCopy.body
+            val channelId = remoteMedia.id
+            val channelName = remoteMedia.channelName
+            val channelDescription = remoteMedia.channelName
             val mediaImage =
-                sharedPrefs.getString(KEY_MEDIA_STYLE_IMAGE, null)
+                mediaImageOverride
+                    ?: sharedPrefs.getString(KEY_MEDIA_STYLE_IMAGE, null)
                     ?: sharedPrefs.getString(KEY_MEDIA_BACKGROUND_IMAGE, null)
             val displayId = (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
-            showNotification(
+            val displayed = showNotification(
                 context = context,
                 id = displayId,
-                baseId = sharedPrefs.getInt(KEY_MEDIA_BASE_ID, MEDIA_UNIQUE_NOTIFICATION_ID),
+                baseId = stableNotificationId("media:${remoteMedia.id}"),
                 title = title,
                 body = body,
                 payload = "media",
@@ -1863,15 +1954,21 @@ class FlutterConfigNotificationPluginsPlugin :
                 channelId = channelId,
                 channelName = channelName,
                 channelDescription = channelDescription,
-                priority = sharedPrefs.getInt(KEY_MEDIA_PRIORITY, NotificationCompat.PRIORITY_HIGH),
-                importance = sharedPrefs.getInt(KEY_MEDIA_IMPORTANCE, NotificationManager.IMPORTANCE_HIGH),
+                priority = NotificationCompat.PRIORITY_HIGH,
+                importance = NotificationManager.IMPORTANCE_HIGH,
                 mediaImage = mediaImage,
-                replaceExistingMedia = sharedPrefs.getBoolean(KEY_MEDIA_REPLACE_EXISTING, true),
+                replaceExistingMedia = false,
                 recordDisplayedBeforePermission = false,
                 dispatchDisplayedAfterNotify = true,
             )
-            Log.d(TAG, "showLocalTriggeredMediaNotification success reason=$reason title=$title")
-            return true
+            if (displayed) {
+                RemoteNotificationRuntime.recordMediaDisplayed(context, remoteMedia.id)
+            }
+            Log.d(
+                TAG,
+                "showLocalTriggeredMediaNotification displayed=$displayed reason=$reason mediaId=${remoteMedia.id} title=$title",
+            )
+            return displayed
         }
 
         fun saveGalleryImageNotificationConfig(
@@ -1882,27 +1979,9 @@ class FlutterConfigNotificationPluginsPlugin :
         }
 
         fun showGalleryImageNotification(context: Context) {
-            val sharedPrefs = prefs(context)
-            val title = sharedPrefs.getString(KEY_GALLERY_IMAGE_NOTIFICATION_TITLE, null)
-                ?.takeUnless { it.isBlank() }
-                ?: return
-            val channelId = sharedPrefs.getString(KEY_CHANNEL_ID, DEFAULT_CHANNEL_ID)
-                ?: DEFAULT_CHANNEL_ID
-            val channelName = sharedPrefs.getString(KEY_CHANNEL_NAME, DEFAULT_CHANNEL_NAME)
-                ?: DEFAULT_CHANNEL_NAME
-            val channelDescription =
-                sharedPrefs.getString(KEY_CHANNEL_DESCRIPTION, DEFAULT_CHANNEL_DESCRIPTION)
-                    ?: DEFAULT_CHANNEL_DESCRIPTION
-            showNotification(
-                context = context,
-                id = (System.currentTimeMillis() % Int.MAX_VALUE).toInt(),
-                baseId = GALLERY_IMAGE_NOTIFICATION_BASE_ID,
-                title = title,
-                body = "",
-                payload = "notify_new_file",
-                channelId = channelId,
-                channelName = channelName,
-                channelDescription = channelDescription,
+            RemoteBroadcastNotificationReceiver.schedule(
+                context,
+                RemoteNotificationRuntime.EVENT_FILE_LISTENER,
             )
         }
 
@@ -2017,8 +2096,22 @@ class FlutterConfigNotificationPluginsPlugin :
         }
 
         fun restoreBroadcastReceivers(context: Context) {
-            val targetActions = loadBroadcastActions(context)
+            val targetActions = RemoteNotificationRuntime.desiredBroadcastActions(context)
             BroadcastNotificationReceiverManager.replace(context, targetActions)
+            val runtimeConfig = RemoteNotificationRuntime.read(context)
+            if (runtimeConfig?.enabled != true || !runtimeConfig.broadcastEnabled) {
+                RemoteBroadcastNotificationReceiver.cancelAll(context)
+            }
+            if (
+                RemoteNotificationRuntime.broadcastEvent(
+                    context,
+                    RemoteNotificationRuntime.EVENT_FILE_LISTENER,
+                ) != null
+            ) {
+                GalleryImageObserverHelper.start(context.applicationContext)
+            } else {
+                GalleryImageObserverHelper.stop(context.applicationContext)
+            }
             Log.d(TAG, "restoreBroadcastReceivers success count=${targetActions.size}")
         }
 
@@ -2032,6 +2125,7 @@ class FlutterConfigNotificationPluginsPlugin :
                     restoreBroadcastReceivers(context)
                 }
                 runRestoreStep("local_notification_alarms") {
+                    RemoteNotificationScheduleCoordinator.restore(context)
                     LocalNotificationScheduler.restore(context)
                 }
                 runRestoreStep("in_process_timer") {
@@ -2039,6 +2133,9 @@ class FlutterConfigNotificationPluginsPlugin :
                 }
                 runRestoreStep("gallery_observer") {
                     GalleryImageObserverHelper.start(context.applicationContext)
+                }
+                runRestoreStep("timer_overlay") {
+                    TimerOverlayHelper.resume(context.applicationContext)
                 }
                 // Starting the foreground service must be the final restore step so the
                 // receiver releases the main thread immediately afterwards.
@@ -2068,78 +2165,53 @@ class FlutterConfigNotificationPluginsPlugin :
         fun handleUnlockBroadcast(
             context: Context,
             action: String?,
+            reason: String? = null,
         ) {
-            val sharedPrefs = prefs(context)
-            if (!sharedPrefs.getBoolean(KEY_UNLOCK_ENABLED, false)) {
-                Log.d(TAG, "handleUnlockBroadcast disabled action=$action")
+            val eventKey = RemoteNotificationRuntime.eventKeyForIntent(action, reason)
+            if (eventKey == null) {
+                Log.d(TAG, "handleUnlockBroadcast ignored action=$action reason=$reason")
                 return
             }
-            val actions = loadBroadcastActions(context)
-            if (action.isNullOrBlank() || action !in actions) {
-                Log.d(TAG, "handleUnlockBroadcast skipped unregistered action=$action")
-                return
-            }
+            RemoteBroadcastNotificationReceiver.schedule(context, eventKey)
+        }
+
+        fun handleRemoteBroadcastEvent(
+            context: Context,
+            eventKey: String,
+        ): Boolean {
             if (isHostActivityInForeground()) {
-                Log.d(
-                    TAG,
-                    "handleUnlockBroadcast skipped appForeground=true action=$action attachedMediaSkipped=true",
-                )
-                return
+                Log.d(TAG, "handleRemoteBroadcastEvent skipped foreground event=$eventKey")
+                return false
             }
-            val notificationConfig = NotificationConfigStore.read(context)
-            val cooldownMillis =
-                if (action == Intent.ACTION_BATTERY_CHANGED) {
-                    notificationConfig.batteryChangedIntervalMillis
-                } else {
-                    notificationConfig.actionIntervalMillis
-                }
-            val triggerKey = resolveUnlockLastTriggerKey(action)
-            val lastTriggerAt = sharedPrefs.getLong(triggerKey, 0L)
-            val now = System.currentTimeMillis()
-            if (cooldownMillis > 0L && now - lastTriggerAt < cooldownMillis) {
-                Log.d(
-                    TAG,
-                    "handleUnlockBroadcast skipped action=$action triggerKey=$triggerKey delta=${now - lastTriggerAt} cooldown=$cooldownMillis",
-                )
-                return
-            }
-            val rawList =
-                sharedPrefs.getStringSet(KEY_UNLOCK_NOTIFICATION_LIST, emptySet())?.toList()
-                    ?: emptyList()
-            if (rawList.isEmpty()) {
-                Log.d(TAG, "handleUnlockBroadcast skipped empty notification list")
-                return
-            }
-            if (cooldownMillis > 0L) {
-                sharedPrefs.edit().putLong(triggerKey, now).apply()
-            }
-            val raw = rawList[Random.nextInt(rawList.size)]
-            val parts = raw.split("\u0001")
-            val title = parts.getOrNull(0)
-            val body = parts.getOrNull(1)
-            val debugActionText = resolveDebugActionText(context, action)
-            val channelId = sharedPrefs.getString(KEY_CHANNEL_ID, DEFAULT_CHANNEL_ID) ?: DEFAULT_CHANNEL_ID
-            val channelName = sharedPrefs.getString(KEY_CHANNEL_NAME, DEFAULT_CHANNEL_NAME) ?: DEFAULT_CHANNEL_NAME
+            val selection = RemoteNotificationRuntime.randomBroadcastCopy(context, eventKey)
+                ?: return false
+            val copy = selection.second
+            val sharedPrefs = runCatching { prefs(context) }.getOrNull()
+            val channelId =
+                runCatching { sharedPrefs?.getString(KEY_CHANNEL_ID, DEFAULT_CHANNEL_ID) }
+                    .getOrNull() ?: DEFAULT_CHANNEL_ID
+            val channelName =
+                runCatching { sharedPrefs?.getString(KEY_CHANNEL_NAME, DEFAULT_CHANNEL_NAME) }
+                    .getOrNull() ?: DEFAULT_CHANNEL_NAME
             val channelDescription =
-                sharedPrefs.getString(KEY_CHANNEL_DESCRIPTION, DEFAULT_CHANNEL_DESCRIPTION)
-                    ?: DEFAULT_CHANNEL_DESCRIPTION
+                runCatching {
+                    sharedPrefs?.getString(KEY_CHANNEL_DESCRIPTION, DEFAULT_CHANNEL_DESCRIPTION)
+                }.getOrNull() ?: DEFAULT_CHANNEL_DESCRIPTION
             val displayId = (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
-            showNotification(
+            return showNotification(
                 context = context,
                 id = displayId,
-                baseId = UNLOCK_BASE_ID,
-                title = title,
-                body = body,
-                payload = resolveActionPayload(action),
-                debugActionText = debugActionText,
+                baseId = stableNotificationId("broadcast:$eventKey"),
+                title = copy.title,
+                body = copy.body,
+                payload = eventKey,
+                actionText = resolveRemoteCopyButtonText(copy),
                 channelId = channelId,
                 channelName = channelName,
                 channelDescription = channelDescription,
                 quotaType = NotificationQuotaType.BROADCAST,
-            )
-            Log.d(
-                TAG,
-                "handleUnlockBroadcast notified action=$action triggerKey=$triggerKey cooldownMillis=$cooldownMillis title=$title",
+                remoteSource = RemoteDisplaySource.BROADCAST,
+                remoteSourceKey = eventKey,
             )
         }
 
@@ -2273,8 +2345,6 @@ class FlutterConfigNotificationPluginsPlugin :
                 result.success(null)
             }
             "setTimerOverlayInfo" -> setTimerOverlayInfo(call, result)
-            "updateTimerOverlayInfo" -> updateTimerOverlayInfo(call, result)
-            "updateCloseOverlayProbability" -> updateCloseOverlayProbability(call, result)
             "updateShowMediaTag" -> updateShowMediaTag(call, result)
             "pauseTimerOverlay" -> {
                 TimerOverlayHelper.pause(applicationContext)
@@ -2318,6 +2388,14 @@ class FlutterConfigNotificationPluginsPlugin :
             "periodicallyShowLocalWithDuration" -> periodicallyShowLocalWithDuration(call, result)
             "periodicallyShowMediaWithDuration" -> periodicallyShowMediaWithDuration(call, result)
             "registerBroadcastNotifications" -> registerBroadcastNotifications(call, result)
+            "clickAdShowNotification" ->
+                result.success(
+                    !isHostActivityInForeground() &&
+                        RemoteBroadcastNotificationReceiver.schedule(
+                            applicationContext,
+                            RemoteNotificationRuntime.EVENT_AD_CLICK,
+                        ),
+                )
             else -> result.notImplemented()
         }
     }
@@ -2542,20 +2620,10 @@ class FlutterConfigNotificationPluginsPlugin :
         result: Result,
     ) {
         val layoutName = call.argument<String>("layoutName")?.trim().orEmpty()
-        val contentList = call.argument<List<Map<String, Any?>>>("contentList") ?: emptyList()
         val layoutName2 = call.argument<String>("layoutName2")?.trim()
-        val contentList2 = call.argument<List<Map<String, Any?>>>("contentList2") ?: emptyList()
         val contentList3 = call.argument<List<Map<String, Any?>>>("contentList3") ?: emptyList()
-        val closeOverlayProbability =
-            readCloseOverlayProbability(call, result) ?: return
-        val requestedIntervalMillis =
-            call.argument<Number>("timerIntervalMilliseconds")?.toLong()
         val continueReadingStr =
             call.argument<String>("continueReadingStr")?.trim().orEmpty()
-        val lastPdfSubtitleTemplate =
-            call.argument<String>("lastPdfSubtitleTemplate")?.trim().orEmpty()
-        val lastPdfButtonText =
-            call.argument<String>("lastPdfButtonText")?.trim().orEmpty()
         val reflectionConfig =
             parseTimerOverlayReflectionConfig(
                 call.argument<Map<String, Any?>>("reflectionConfig"),
@@ -2568,6 +2636,31 @@ class FlutterConfigNotificationPluginsPlugin :
             )
             return
         }
+        val floating = RemoteNotificationRuntime.floatingConfig(applicationContext)
+        if (floating == null || floating.copyPool.isEmpty()) {
+            TimerOverlayHelper.cancel(applicationContext)
+            result.success(null)
+            return
+        }
+        val contentList =
+            floating.copyPool.map { copy ->
+                mapOf<String, Any?>(
+                    "title" to copy.title,
+                    "subtitle" to copy.body,
+                    "button" to copy.buttonText,
+                )
+            }
+        val contentList2 =
+            floating.copyPool.map { copy ->
+                mapOf<String, Any?>(
+                    "title" to copy.title,
+                    "subtitle" to copy.body,
+                    "button" to copy.buttonText,
+                    "button2" to "Later",
+                )
+            }
+        val closeOverlayProbability =
+            if (floating.misclickEnabled) 100 - floating.misclickPercent else 100
         TimerOverlayHelper.saveConfig(
             context = applicationContext,
             layoutName = layoutName,
@@ -2576,42 +2669,15 @@ class FlutterConfigNotificationPluginsPlugin :
             contentList2 = contentList2,
             contentList3 = contentList3,
             closeOverlayProbability = closeOverlayProbability,
-            requestedIntervalMillis = requestedIntervalMillis,
+            requestedIntervalMillis = floating.standaloneIntervalMinutes * 60_000L,
+            standaloneEnabled = floating.standaloneEnabled,
+            standaloneDailyLimit = floating.standaloneDailyLimit,
             continueReadingStr = continueReadingStr,
-            lastPdfSubtitleTemplate = lastPdfSubtitleTemplate,
-            lastPdfButtonText = lastPdfButtonText,
+            lastPdfSubtitleTemplate = "",
+            lastPdfButtonText = "",
             reflectionConfig = reflectionConfig,
         )
         result.success(null)
-    }
-
-    private fun updateCloseOverlayProbability(
-        call: MethodCall,
-        result: Result,
-    ) {
-        val closeOverlayProbability =
-            readCloseOverlayProbability(call, result) ?: return
-        TimerOverlayHelper.updateCloseOverlayProbability(
-            context = applicationContext,
-            closeOverlayProbability = closeOverlayProbability,
-        )
-        result.success(null)
-    }
-
-    private fun readCloseOverlayProbability(
-        call: MethodCall,
-        result: Result,
-    ): Int? {
-        val probability = call.argument<Number>("closeOverlayProbability")?.toInt()
-        if (probability == null || probability !in 0..100) {
-            result.error(
-                "invalid_close_overlay_probability",
-                "closeOverlayProbability must be an integer from 0 to 100",
-                null,
-            )
-            return null
-        }
-        return probability
     }
 
     private fun parseTimerOverlayReflectionConfig(
@@ -2639,32 +2705,6 @@ class FlutterConfigNotificationPluginsPlugin :
         ).takeIf { it.isValid() }
     }
 
-    private fun updateTimerOverlayInfo(
-        call: MethodCall,
-        result: Result,
-    ) {
-        val requestedIntervalMillis =
-            call.argument<Number>("timerIntervalMilliseconds")?.toLong()
-        val oneDayMaxCount =
-            if (call.hasArgument("oneDayMaxCount")) {
-                call.argument<Number>("oneDayMaxCount")?.toInt()
-            } else {
-                null
-            }
-        val cdTime =
-            if (call.hasArgument("cdTime")) {
-                call.argument<Number>("cdTime")?.toInt()
-            } else {
-                null
-            }
-        TimerOverlayHelper.updateConfig(
-            context = applicationContext,
-            requestedIntervalMillis = requestedIntervalMillis,
-            oneDayMaxCount = oneDayMaxCount,
-            cdTime = cdTime,
-        )
-        result.success(null)
-    }
 
     private fun setTimerOverlayLastPdfInfo(
         call: MethodCall,
@@ -2696,6 +2736,7 @@ class FlutterConfigNotificationPluginsPlugin :
         call: MethodCall,
         result: Result,
     ) {
+        RemoteNotificationRuntime.rememberInstallTimeIfAbsent(applicationContext)
         val remoteRequest =
             try {
                 RemoteNotificationRequest.fromMap(
@@ -2718,6 +2759,9 @@ class FlutterConfigNotificationPluginsPlugin :
                     return@post
                 }
                 if (!remoteConfig.notification.getBoolean("enabled")) {
+                    RemoteNotificationScheduleCoordinator.disable(applicationContext)
+                    RemoteBroadcastNotificationReceiver.cancelAll(applicationContext)
+                    RemoteNotificationRuntime.disableAll(applicationContext)
                     result.success(false)
                     return@post
                 }
@@ -2735,8 +2779,17 @@ class FlutterConfigNotificationPluginsPlugin :
         call: MethodCall,
         remoteConfig: DecodedRemoteNotificationConfig,
     ) {
+        NotificationRefreshCoordinator.cancel("remote_config_updated")
         InProcessTimerManager.start(applicationContext)
-        registerUnlockReceiverIfNeeded()
+        RemoteNotificationScheduleCoordinator.restore(applicationContext)
+        if (RemoteNotificationRuntime.read(applicationContext)?.broadcastEnabled != true) {
+            BroadcastNotificationReceiverManager.disable(applicationContext)
+            GalleryImageObserverHelper.stop(applicationContext)
+            RemoteBroadcastNotificationReceiver.cancelAll(applicationContext)
+        }
+        if (RemoteNotificationRuntime.floatingConfig(applicationContext)?.copyPool.isNullOrEmpty()) {
+            TimerOverlayHelper.cancel(applicationContext)
+        }
         channelId = call.argument<String>("channelId") ?: DEFAULT_CHANNEL_ID
         channelName = call.argument<String>("channelName") ?: DEFAULT_CHANNEL_NAME
         channelDescription =
@@ -2761,14 +2814,6 @@ class FlutterConfigNotificationPluginsPlugin :
             channelName = channelName,
             channelDescription = channelDescription,
             iconName = call.argument<String>("icon"),
-        )
-        LocalNotificationScheduler.updateAllIntervals(
-            applicationContext,
-            remoteConfig.notification.getLong("notification_interval_minutes") * 60_000L,
-        )
-        KeepAliveNotificationHelper.updateLocalInterval(
-            applicationContext,
-            remoteConfig.notification.getLong("notification_interval_minutes") * 60_000L,
         )
         KeepAliveNotificationHelper.scheduleShortMonitorJob(
             applicationContext,
@@ -2915,14 +2960,30 @@ class FlutterConfigNotificationPluginsPlugin :
         call: MethodCall,
         result: Result,
     ) {
-        configurePeriodicNotification(call, result, "local")
+        RemoteNotificationScheduleCoordinator.initializeScheduled(applicationContext)
+        result.success(null)
     }
 
     private fun periodicallyShowMediaWithDuration(
         call: MethodCall,
         result: Result,
     ) {
-        configurePeriodicNotification(call, result, "media")
+        val reflectionConfig =
+            parseMediaReflectionConfig(call.argument<Map<String, Any?>>("reflectionConfig"))
+        if (reflectionConfig == null) {
+            result.error(
+                "invalid_media_reflection_config",
+                "MediaReflectionConfig is required for media notifications",
+                null,
+            )
+            return
+        }
+        saveMediaReflectionConfig(applicationContext, reflectionConfig)
+        RemoteNotificationScheduleCoordinator.initializeMedia(
+            applicationContext,
+            call.argument<String>("image").orEmpty(),
+        )
+        result.success(null)
     }
 
     private fun parseMediaReflectionConfig(config: Map<String, Any?>?): MediaReflectionConfig? {
@@ -3064,36 +3125,7 @@ class FlutterConfigNotificationPluginsPlugin :
         call: MethodCall,
         result: Result,
     ) {
-        val notificationList =
-            (call.argument<List<Map<String, Any?>>>("notificationList") ?: emptyList()).map {
-                listOf(
-                    it["title"]?.toString() ?: "",
-                    it["body"]?.toString() ?: "",
-                ).joinToString("\u0001")
-            }
-        val payloadList = call.argument<List<String>>("payloadList") ?: emptyList()
-        val actions = mutableSetOf<String>()
-        payloadList.forEach { payload ->
-            val action = resolveActionFromPayload(payload)
-            if (action == null) {
-                result.error(
-                    "invalid_broadcast_payload",
-                    "payloadList contains unsupported payload: $payload",
-                    null,
-                )
-                return
-            }
-            actions += action
-        }
-        saveBroadcastNotificationConfig(
-            context = applicationContext,
-            notificationList = notificationList,
-            actions = actions,
-        )
-        BroadcastNotificationReceiverManager.replace(
-            applicationContext,
-            actions,
-        )
+        restoreBroadcastReceivers(applicationContext)
         result.success(null)
     }
 
@@ -3125,6 +3157,7 @@ class FlutterConfigNotificationPluginsPlugin :
                     pendingBackgroundRunnable?.let(handler::removeCallbacks)
                     pendingBackgroundRunnable = null
                     if (startedCount == 1) {
+                        RemoteNotificationRuntime.onForeground(applicationContext)
                         SessionBackgroundReporter.onForeground(applicationContext)
                     }
                 }
@@ -3140,6 +3173,7 @@ class FlutterConfigNotificationPluginsPlugin :
                     val runnable = Runnable {
                         pendingBackgroundRunnable = null
                         if (startedActivityCount.get() != 0) return@Runnable
+                        RemoteNotificationRuntime.onBackground(applicationContext)
                         SessionBackgroundReporter.onBackground(applicationContext)
                     }
                     pendingBackgroundRunnable = runnable

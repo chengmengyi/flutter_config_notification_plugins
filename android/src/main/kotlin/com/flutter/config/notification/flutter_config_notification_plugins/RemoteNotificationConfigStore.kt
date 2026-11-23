@@ -2,6 +2,7 @@ package com.flutter.config.notification.flutter_config_notification_plugins
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.os.Build
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONException
@@ -15,8 +16,6 @@ internal data class RemoteNotificationRequest(
     val headers: Map<String, String>,
     val body: JSONObject,
     val paths: Map<String, String>,
-    val schemaRevision: Int,
-    val mappingRevision: Int,
     val timeoutMilliseconds: Int,
     val maxAttempts: Int,
     val retryDelayMilliseconds: List<Long>,
@@ -39,17 +38,7 @@ internal data class RemoteNotificationRequest(
                     }.orEmpty()
             val body = mapToJson(values["body"] as? Map<*, *> ?: emptyMap<Any, Any>())
             val mapping = values["mapping"] as? Map<*, *> ?: error("remoteRequest.mapping is required")
-            val paths =
-                (mapping["paths"] as? Map<*, *>)
-                    ?.entries
-                    ?.associate { entry ->
-                        val canonicalPath = entry.key?.toString()?.trim().orEmpty()
-                        val obfuscatedKey = entry.value?.toString()?.trim().orEmpty()
-                        require(canonicalPath.isNotEmpty() && obfuscatedKey.isNotEmpty()) {
-                            "remoteRequest.mapping.paths contains an empty path or key"
-                        }
-                        canonicalPath to obfuscatedKey
-                    } ?: error("remoteRequest.mapping.paths is required")
+            val paths = parseMapping(mapping)
             require(paths.containsKey("code")) { "mapping.code is required" }
             require(paths.containsKey("data.notification")) { "mapping.notification is required" }
 
@@ -72,12 +61,117 @@ internal data class RemoteNotificationRequest(
                 headers = headers,
                 body = body,
                 paths = paths,
-                schemaRevision = (mapping["schemaRevision"] as? Number)?.toInt() ?: 0,
-                mappingRevision = (mapping["mappingRevision"] as? Number)?.toInt() ?: 0,
                 timeoutMilliseconds = timeoutMilliseconds,
                 maxAttempts = maxAttempts,
                 retryDelayMilliseconds = retryDelays,
             )
+        }
+
+        private fun parseMapping(mapping: Map<*, *>): Map<String, String> {
+            require(mapping.isNotEmpty()) { "remoteRequest.mapping must not be empty" }
+
+            val fullPaths = linkedMapOf<String, List<String>>()
+            val canonicalPathByObfuscatedPath = linkedMapOf<String, String>()
+            mapping.entries.forEach { entry ->
+                val canonicalPath = entry.key?.toString()?.trim().orEmpty()
+                val obfuscatedPath = entry.value?.toString()?.trim().orEmpty()
+                require(canonicalPath.isNotEmpty() && obfuscatedPath.isNotEmpty()) {
+                    "remoteRequest.mapping contains an empty path"
+                }
+
+                val canonicalSegments = splitAndValidatePath(canonicalPath, "mapping key")
+                val obfuscatedSegments = splitAndValidatePath(obfuscatedPath, "mapping value")
+                require(canonicalSegments.size == obfuscatedSegments.size) {
+                    "mapping paths must have the same depth: $canonicalPath -> $obfuscatedPath"
+                }
+                canonicalSegments.indices.forEach { index ->
+                    require((canonicalSegments[index] == "*") == (obfuscatedSegments[index] == "*")) {
+                        "mapping array markers must be aligned: $canonicalPath -> $obfuscatedPath"
+                    }
+                }
+
+                val previousCanonicalPath =
+                    canonicalPathByObfuscatedPath.put(obfuscatedPath, canonicalPath)
+                require(previousCanonicalPath == null) {
+                    "mapping paths must be one-to-one: $previousCanonicalPath and $canonicalPath"
+                }
+                fullPaths[canonicalPath] = obfuscatedSegments
+            }
+
+            fullPaths.forEach { (canonicalPath, obfuscatedSegments) ->
+                val canonicalSegments = canonicalPath.split('.')
+                for (length in 1 until canonicalSegments.size) {
+                    if (canonicalSegments[length - 1] == "*") continue
+                    val canonicalParent = canonicalSegments.take(length).joinToString(".")
+                    val mappedParent =
+                        fullPaths[canonicalParent]
+                            ?: error("mapping parent path is missing: $canonicalParent")
+                    require(mappedParent == obfuscatedSegments.take(length)) {
+                        "mapping parent path is inconsistent: $canonicalPath"
+                    }
+                }
+            }
+
+            val arrayContainerPaths =
+                fullPaths.keys
+                    .flatMap { canonicalPath ->
+                        val segments = canonicalPath.split('.')
+                        segments.indices.mapNotNull { index ->
+                            if (segments[index] == "*") {
+                                segments.take(index).joinToString(".")
+                            } else {
+                                null
+                            }
+                        }
+                    }.toSet()
+            val result = linkedMapOf<String, String>()
+            fullPaths.forEach { (canonicalPath, obfuscatedSegments) ->
+                val normalizedPath =
+                    normalizeCanonicalPath(
+                        segments = canonicalPath.split('.'),
+                        arrayContainerPaths = arrayContainerPaths,
+                    )
+                require(result.put(normalizedPath, obfuscatedSegments.last()) == null) {
+                    "duplicate mapping path: $canonicalPath"
+                }
+            }
+            return result
+        }
+
+        private fun splitAndValidatePath(
+            path: String,
+            label: String,
+        ): List<String> {
+            val segments = path.split('.')
+            require(segments.none { it.isEmpty() }) { "$label contains an empty segment: $path" }
+            require(segments.last() != "*") { "$label must not end with an array marker: $path" }
+            segments.forEachIndexed { index, segment ->
+                if (segment == "*") {
+                    require(index > 0 && segments[index - 1] != "*") {
+                        "$label contains an invalid array marker: $path"
+                    }
+                } else {
+                    require(!segment.contains('*')) {
+                        "$label must use * as a standalone segment: $path"
+                    }
+                }
+            }
+            return segments
+        }
+
+        private fun normalizeCanonicalPath(
+            segments: List<String>,
+            arrayContainerPaths: Set<String>,
+        ): String {
+            val normalized = mutableListOf<String>()
+            val sourcePrefix = mutableListOf<String>()
+            segments.forEach { segment ->
+                sourcePrefix += segment
+                if (segment == "*") return@forEach
+                val isArray = sourcePrefix.joinToString(".") in arrayContainerPaths
+                normalized += if (isArray) "$segment[]" else segment
+            }
+            return normalized.joinToString(".")
         }
 
         private const val DEFAULT_TIMEOUT_MILLIS = 10_000
@@ -89,8 +183,6 @@ internal data class RemoteNotificationRequest(
 internal data class DecodedRemoteNotificationConfig(
     val response: JSONObject,
     val notification: JSONObject,
-    val schemaRevision: Int,
-    val mappingRevision: Int,
 )
 
 internal object RemoteNotificationConfigStore {
@@ -98,8 +190,6 @@ internal object RemoteNotificationConfigStore {
     private const val PREFS_NAME = "flutter_config_notification_plugins"
     private const val KEY_RESPONSE = "remote_notification_response_v1"
     private const val KEY_NOTIFICATION = "remote_notification_config_v1"
-    private const val KEY_SCHEMA_REVISION = "remote_notification_schema_revision"
-    private const val KEY_MAPPING_REVISION = "remote_notification_mapping_revision"
     private const val KEY_FETCHED_AT = "remote_notification_fetched_at"
     private val sensitiveHeaderPattern =
         Regex("authorization|token|cookie|secret|api[-_]?key|signature", RegexOption.IGNORE_CASE)
@@ -154,10 +244,17 @@ internal object RemoteNotificationConfigStore {
     }
 
     fun readNotification(context: Context): JSONObject? {
+        val appContext = context.applicationContext
         val raw =
-            context.applicationContext
-                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(KEY_NOTIFICATION, null)
+                ?: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    appContext.createDeviceProtectedStorageContext()
+                        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .getString(KEY_NOTIFICATION, null)
+                } else {
+                    null
+                }
                 ?: return null
         return runCatching { JSONObject(raw) }.getOrNull()
     }
@@ -206,24 +303,35 @@ internal object RemoteNotificationConfigStore {
         return DecodedRemoteNotificationConfig(
             response = decoded,
             notification = notification,
-            schemaRevision = request.schemaRevision,
-            mappingRevision = request.mappingRevision,
         )
     }
 
     private fun save(
         context: Context,
         config: DecodedRemoteNotificationConfig,
-    ): Boolean =
-        context.applicationContext
+    ): Boolean {
+        val appContext = context.applicationContext
+        val saved =
+            appContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_RESPONSE, config.response.toString())
             .putString(KEY_NOTIFICATION, config.notification.toString())
-            .putInt(KEY_SCHEMA_REVISION, config.schemaRevision)
-            .putInt(KEY_MAPPING_REVISION, config.mappingRevision)
             .putLong(KEY_FETCHED_AT, System.currentTimeMillis())
             .commit()
+        val directBootSaved =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                appContext.createDeviceProtectedStorageContext()
+                    .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putString(KEY_NOTIFICATION, config.notification.toString())
+                    .putLong(KEY_FETCHED_AT, System.currentTimeMillis())
+                    .commit()
+            } else {
+                true
+            }
+        return saved && directBootSaved
+    }
 
     private fun validateNotification(notification: JSONObject) {
         listOf(
@@ -284,9 +392,14 @@ internal object RemoteNotificationConfigStore {
         parent: MappingNode,
     ): JSONObject {
         val output = JSONObject()
-        parent.children.values.forEach { node ->
-            val sourceKey = node.obfuscatedKey ?: error("missing mapping for ${node.canonicalName}")
-            if (!source.has(sourceKey)) return@forEach
+        val nodesBySourceKey =
+            parent.children.values.associateBy { node ->
+                node.obfuscatedKey ?: error("missing mapping for ${node.canonicalName}")
+            }
+        val sourceKeys = source.keys()
+        while (sourceKeys.hasNext()) {
+            val sourceKey = sourceKeys.next()
+            val node = nodesBySourceKey[sourceKey] ?: continue
             val value = source.opt(sourceKey)
             output.put(node.canonicalName, decodeValue(value, node))
         }

@@ -235,6 +235,9 @@ object KeepAliveNotificationHelper {
     }
 
     fun readLocalConfig(context: Context): LocalConfig? {
+        if (RemoteNotificationConfigStore.readNotification(context) != null) {
+            return null
+        }
         val sharedPrefs = prefs(context)
         if (!sharedPrefs.getBoolean(KEY_LOCAL_ENABLED, false)) {
             return null

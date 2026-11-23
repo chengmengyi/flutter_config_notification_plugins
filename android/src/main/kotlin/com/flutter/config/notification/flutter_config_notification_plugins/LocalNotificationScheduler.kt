@@ -21,6 +21,10 @@ object LocalNotificationScheduler {
     private const val EXTRA_SCHEDULE_ID = "local_notification_schedule_id"
     private const val EXTRA_SCHEDULE_VERSION = "local_notification_schedule_version"
     private const val MIN_INTERVAL_MILLIS = 1_000L
+    const val EXTRA_REMOTE_CONFIG_SCHEDULE = "remote_config_schedule"
+    const val EXTRA_REMOTE_SCHEDULE_ID = "remote_schedule_id"
+    const val EXTRA_REMOTE_MEDIA_ID = "remote_media_id"
+    const val EXTRA_INITIAL_TRIGGER_AT = "initial_trigger_at_millis"
     private val lock = Any()
 
     private data class Schedule(
@@ -70,7 +74,11 @@ object LocalNotificationScheduler {
                         version = (old?.version ?: 0L) + 1L,
                         workSlot = workSlot,
                         intervalMillis = normalizedInterval,
-                        nextTriggerAt = now + normalizedInterval,
+                        nextTriggerAt =
+                            sourceIntent.getLongExtra(EXTRA_INITIAL_TRIGGER_AT, 0L)
+                                .takeIf { it > 0L }
+                                ?.coerceAtLeast(now + MIN_INTERVAL_MILLIS)
+                                ?: (now + normalizedInterval),
                         lastDeliveredOccurrence = 0L,
                         lastDeliveredAt = 0L,
                         extras = encodedExtras,
@@ -86,6 +94,33 @@ object LocalNotificationScheduler {
         TimerNotificationWorkManager.schedule(appContext, schedule.id, update = scheduleResult.second)
         FixedTimerAlarmManager.schedule(appContext, schedule.id, update = scheduleResult.second)
         InProcessTimerManager.start(appContext)
+    }
+
+    fun replaceRemoteSchedules(
+        context: Context,
+        sourceIntents: List<Intent>,
+    ) {
+        val appContext = context.applicationContext
+        val desiredIds = sourceIntents.map { it.getIntExtra("id", 0) }.filter { it != 0 }.toSet()
+        val removed =
+            synchronized(lock) {
+                val schedules = readSchedules(appContext)
+                val stale =
+                    schedules.values.filter { schedule -> schedule.id !in desiredIds }
+                stale.forEach { schedules.remove(it.id) }
+                if (stale.isNotEmpty()) writeSchedules(appContext, schedules)
+                stale
+            }
+        removed.forEach { cancelAlarm(appContext, it) }
+        sourceIntents.forEach { register(appContext, it) }
+        TimerNotificationWorkManager.restore(appContext)
+        FixedTimerAlarmManager.restore(appContext)
+        if (sourceIntents.isEmpty() && !hasSchedules(appContext)) InProcessTimerManager.stop()
+        Log.d(TAG, "replaceRemoteSchedules desired=${sourceIntents.size} removed=${removed.size}")
+    }
+
+    fun clearRemoteSchedules(context: Context) {
+        replaceRemoteSchedules(context, emptyList())
     }
 
     fun handleAlarm(context: Context, intent: Intent): Boolean {
@@ -117,7 +152,6 @@ object LocalNotificationScheduler {
             }
             if (changed) writeSchedules(appContext, schedules)
             schedules.values
-                .filter { it.workSlot in 1..3 }
                 .map { TimerWorkConfig(it.workSlot, it.id, it.intervalMillis) }
                 .sortedBy { it.slot }
         }
@@ -274,6 +308,16 @@ object LocalNotificationScheduler {
                 alarmManager.set(AlarmManager.RTC_WAKEUP, schedule.nextTriggerAt, pendingIntent)
             }
         }
+    }
+
+    private fun cancelAlarm(
+        context: Context,
+        schedule: Schedule,
+    ) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+        val pendingIntent = createPendingIntent(context, schedule)
+        alarmManager?.cancel(pendingIntent)
+        pendingIntent.cancel()
     }
 
     private fun createPendingIntent(context: Context, schedule: Schedule): PendingIntent {

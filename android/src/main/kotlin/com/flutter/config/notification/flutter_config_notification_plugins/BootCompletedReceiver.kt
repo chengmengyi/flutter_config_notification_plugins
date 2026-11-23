@@ -17,6 +17,12 @@ class BootCompletedReceiver : BroadcastReceiver() {
                 context = context,
                 reason = action,
             )
+            if (intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED) {
+                RemoteBroadcastNotificationReceiver.schedule(
+                    context,
+                    RemoteNotificationRuntime.EVENT_REBOOT,
+                )
+            }
         } catch (e: Exception) {
             Log.d("LocalNotificationPlugin", "BootCompletedReceiver failed action=$action error=${e.message}")
         }

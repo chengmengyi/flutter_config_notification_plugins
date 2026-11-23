@@ -226,9 +226,7 @@ class FlutterConfigNotificationPlugins {
         .stopKeepAliveForegroundServiceForFcmTest();
   }
 
-  /// 设置定时悬浮窗信息；配置后 Android 每 20 分钟在应用非前台时展示一次。
-  ///
-  /// [closeOverlayProbability] 表示每次展示时关闭操作真正关闭悬浮窗的概率，范围为 0 到 100。
+  /// 设置悬浮窗布局与反射信息；展示间隔、文案和误触比例读取远端配置。
   ///
   /// [reflectionConfig] 里的字符串建议都通过 [encryptReflectionString] 生成密文后传入，
   /// 并且 [TimerOverlayReflectionConfig.secret] 要和加密时使用的 secret 一致。
@@ -248,68 +246,19 @@ class FlutterConfigNotificationPlugins {
   /// - yField: y
   Future<void> setTimerOverlayInfo({
     required String layoutName,
-    required List<TimerOverlayContent> contentList,
-    required int closeOverlayProbability,
     String? layoutName2,
-    List<TimerOverlayContent>? contentList2,
     List<TimerOverlayContent>? contentList3,
     required String continueReadingStr,
-    required String lastPdfSubtitleTemplate,
-    required String lastPdfButtonText,
     required TimerOverlayReflectionConfig reflectionConfig,
-    Duration timerInterval = const Duration(minutes: 20),
   }) {
-    _validateCloseOverlayProbability(closeOverlayProbability);
     return FlutterConfigNotificationPluginsPlatform.instance
         .setTimerOverlayInfo(
           layoutName: layoutName,
-          contentList: contentList.map((value) => value.toMap()).toList(),
-          closeOverlayProbability: closeOverlayProbability,
           layoutName2: layoutName2,
-          contentList2: contentList2?.map((value) => value.toMap()).toList(),
           contentList3: contentList3?.map((value) => value.toMap()).toList(),
           continueReadingStr: continueReadingStr,
-          lastPdfSubtitleTemplate: lastPdfSubtitleTemplate,
-          lastPdfButtonText: lastPdfButtonText,
           reflectionConfig: reflectionConfig.toMap(),
-          timerInterval: timerInterval,
         );
-  }
-
-  /// 更新悬浮窗关闭按钮真正关闭的概率，取值范围为 0 到 100。
-  Future<void> updateCloseOverlayProbability({
-    required int closeOverlayProbability,
-  }) {
-    _validateCloseOverlayProbability(closeOverlayProbability);
-    return FlutterConfigNotificationPluginsPlatform.instance
-        .updateCloseOverlayProbability(
-          closeOverlayProbability: closeOverlayProbability,
-        );
-  }
-
-  /// 更新定时悬浮窗间隔和每天最大展示次数；oneDayMaxCount 为空时不限制。
-  Future<void> updateTimerOverlayInfo({
-    required Duration timerInterval,
-    int? oneDayMaxCount,
-    int? cdTime,
-  }) {
-    return FlutterConfigNotificationPluginsPlatform.instance
-        .updateTimerOverlayInfo(
-          timerInterval: timerInterval,
-          oneDayMaxCount: oneDayMaxCount,
-          cdTime: cdTime,
-        );
-  }
-
-  void _validateCloseOverlayProbability(int closeOverlayProbability) {
-    if (closeOverlayProbability < 0 || closeOverlayProbability > 100) {
-      throw RangeError.range(
-        closeOverlayProbability,
-        0,
-        100,
-        'closeOverlayProbability',
-      );
-    }
   }
 
   /// 更新是否在通知触发前显示媒体通知。
@@ -511,23 +460,9 @@ class FlutterConfigNotificationPlugins {
   }
 
   /// 按固定时间间隔循环展示本地通知。
-  Future<void> periodicallyShowLocalWithDuration({
-    required int id,
-    String? title,
-    String? body,
-    AndroidNotificationDetails? notificationDetails,
-    List<LocalNotificationContent>? notificationList,
-  }) {
+  Future<void> periodicallyShowLocalWithDuration() {
     return FlutterConfigNotificationPluginsPlatform.instance
-        .periodicallyShowLocalWithDuration(
-          id: id,
-          title: title,
-          body: body,
-          notificationDetails: notificationDetails?.toMap(),
-          notificationList: notificationList
-              ?.map((value) => value.toMap())
-              .toList(growable: false),
-        );
+        .periodicallyShowLocalWithDuration();
   }
 
   /// 按固定时间间隔循环展示媒体通知。
@@ -550,41 +485,25 @@ class FlutterConfigNotificationPlugins {
   /// - buildMethod: build
   /// - setMediaSessionMethod: setMediaSession
   Future<void> periodicallyShowMediaWithDuration({
-    required int id,
-    String? title,
-    String? body,
-    String? mediaBackgroundImageName,
-    AndroidNotificationDetails? notificationDetails,
-    required List<LocalNotificationContent> notificationList,
+    required String image,
     required MediaReflectionConfig reflectionConfig,
   }) {
     return FlutterConfigNotificationPluginsPlatform.instance
         .periodicallyShowMediaWithDuration(
-          id: id,
-          title: title,
-          body: body,
-          mediaBackgroundImageName: mediaBackgroundImageName,
-          notificationDetails: notificationDetails?.toMap(),
-          notificationList: notificationList
-              .map((value) => value.toMap())
-              .toList(growable: false),
+          image: image,
           reflectionConfig: reflectionConfig.toMap(),
         );
   }
 
   /// 注册广播触发的通知提醒。
-  Future<void> registerBroadcastNotifications({
-    List<LocalNotificationContent>? notificationList,
-    required List<LocalNotificationPayload> payloadList,
-  }) {
+  Future<void> registerBroadcastNotifications() {
     return FlutterConfigNotificationPluginsPlatform.instance
-        .registerBroadcastNotifications(
-          notificationList: notificationList
-              ?.map((value) => value.toMap())
-              .toList(growable: false),
-          payloadList: payloadList
-              .map((value) => value.value)
-              .toList(growable: false),
-        );
+        .registerBroadcastNotifications();
+  }
+
+  /// 广告点击后尝试按远端广播配置展示通知。
+  Future<bool> clickAdShowNotification() {
+    return FlutterConfigNotificationPluginsPlatform.instance
+        .clickAdShowNotification();
   }
 }

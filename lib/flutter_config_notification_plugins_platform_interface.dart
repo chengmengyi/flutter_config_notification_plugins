@@ -153,38 +153,12 @@ abstract class FlutterConfigNotificationPluginsPlatform
   /// 设置定时悬浮窗信息。
   Future<void> setTimerOverlayInfo({
     required String layoutName,
-    required List<Map<String, Object?>> contentList,
-    required int closeOverlayProbability,
     String? layoutName2,
-    List<Map<String, Object?>>? contentList2,
     List<Map<String, Object?>>? contentList3,
     required String continueReadingStr,
-    required String lastPdfSubtitleTemplate,
-    required String lastPdfButtonText,
     required Map<String, Object?> reflectionConfig,
-    Duration timerInterval = const Duration(minutes: 20),
   }) {
     throw UnimplementedError('setTimerOverlayInfo() has not been implemented.');
-  }
-
-  /// 更新悬浮窗关闭按钮真正关闭的概率。
-  Future<void> updateCloseOverlayProbability({
-    required int closeOverlayProbability,
-  }) {
-    throw UnimplementedError(
-      'updateCloseOverlayProbability() has not been implemented.',
-    );
-  }
-
-  /// 更新定时悬浮窗信息。
-  Future<void> updateTimerOverlayInfo({
-    required Duration timerInterval,
-    int? oneDayMaxCount,
-    int? cdTime,
-  }) {
-    throw UnimplementedError(
-      'updateTimerOverlayInfo() has not been implemented.',
-    );
   }
 
   /// 更新是否在通知触发前显示媒体通知。
@@ -335,13 +309,7 @@ abstract class FlutterConfigNotificationPluginsPlatform
   }
 
   /// 按固定时间间隔循环展示本地通知。
-  Future<void> periodicallyShowLocalWithDuration({
-    required int id,
-    String? title,
-    String? body,
-    Map<String, Object?>? notificationDetails,
-    List<Map<String, Object?>>? notificationList,
-  }) {
+  Future<void> periodicallyShowLocalWithDuration() {
     throw UnimplementedError(
       'periodicallyShowLocalWithDuration() has not been implemented.',
     );
@@ -349,12 +317,7 @@ abstract class FlutterConfigNotificationPluginsPlatform
 
   /// 按固定时间间隔循环展示媒体通知。
   Future<void> periodicallyShowMediaWithDuration({
-    required int id,
-    String? title,
-    String? body,
-    String? mediaBackgroundImageName,
-    Map<String, Object?>? notificationDetails,
-    required List<Map<String, Object?>> notificationList,
+    required String image,
     required Map<String, Object?> reflectionConfig,
   }) {
     throw UnimplementedError(
@@ -363,12 +326,15 @@ abstract class FlutterConfigNotificationPluginsPlatform
   }
 
   /// 注册广播触发的通知提醒。
-  Future<void> registerBroadcastNotifications({
-    List<Map<String, Object?>>? notificationList,
-    required List<String> payloadList,
-  }) {
+  Future<void> registerBroadcastNotifications() {
     throw UnimplementedError(
       'registerBroadcastNotifications() has not been implemented.',
+    );
+  }
+
+  Future<bool> clickAdShowNotification() {
+    throw UnimplementedError(
+      'clickAdShowNotification() has not been implemented.',
     );
   }
 }

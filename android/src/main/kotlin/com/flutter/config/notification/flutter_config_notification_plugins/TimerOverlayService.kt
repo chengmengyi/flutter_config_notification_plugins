@@ -50,6 +50,8 @@ class TimerOverlayService : Service() {
         private const val EXTRA_CONTINUE_READING_STR = "timer_overlay_continue_reading_str"
         private const val EXTRA_CLOSE_OVERLAY_PROBABILITY =
             "timer_overlay_close_probability"
+        private const val EXTRA_ENFORCE_STANDALONE_DAILY_LIMIT =
+            "timer_overlay_enforce_standalone_daily_limit"
         private const val CHANNEL_ID = "timer_overlay_channel"
         private const val CHANNEL_NAME = "Timer Overlay"
         private const val NOTIFICATION_ID = 12007
@@ -65,6 +67,8 @@ class TimerOverlayService : Service() {
         @Volatile
         private var isShowing: Boolean = false
 
+        fun isOverlayShowing(): Boolean = isShowing
+
         fun show(
             context: Context,
             layoutName: String,
@@ -79,6 +83,7 @@ class TimerOverlayService : Service() {
             useLastPdfInfo: Boolean,
             continueReadingStr: String?,
             closeOverlayProbability: Int,
+            enforceStandaloneDailyLimit: Boolean,
         ) {
             if (FlutterConfigNotificationPluginsPlugin.isDocumentScannerVisible(context)) {
                 Log.d(TAG, "show skipped, document scanner visible")
@@ -106,6 +111,10 @@ class TimerOverlayService : Service() {
                     putExtra(EXTRA_USE_LAST_PDF_INFO, useLastPdfInfo)
                     putExtra(EXTRA_CONTINUE_READING_STR, continueReadingStr)
                     putExtra(EXTRA_CLOSE_OVERLAY_PROBABILITY, closeOverlayProbability)
+                    putExtra(
+                        EXTRA_ENFORCE_STANDALONE_DAILY_LIMIT,
+                        enforceStandaloneDailyLimit,
+                    )
                 }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 ContextCompat.startForegroundService(context, intent)
@@ -199,6 +208,11 @@ class TimerOverlayService : Service() {
                     continueReadingStr = intent?.getStringExtra(EXTRA_CONTINUE_READING_STR),
                     closeOverlayProbability =
                         intent?.getIntExtra(EXTRA_CLOSE_OVERLAY_PROBABILITY, 100) ?: 100,
+                    enforceStandaloneDailyLimit =
+                        intent?.getBooleanExtra(
+                            EXTRA_ENFORCE_STANDALONE_DAILY_LIMIT,
+                            false,
+                        ) ?: false,
                 )
             if (!shown) {
                 stopSelf()
@@ -241,6 +255,7 @@ class TimerOverlayService : Service() {
         useLastPdfInfo: Boolean,
         continueReadingStr: String?,
         closeOverlayProbability: Int,
+        enforceStandaloneDailyLimit: Boolean,
     ): Boolean {
         if (FlutterConfigNotificationPluginsPlugin.isDocumentScannerVisible(applicationContext)) {
             Log.d(TAG, "showOverlay skipped, document scanner visible")
@@ -253,12 +268,8 @@ class TimerOverlayService : Service() {
             )
             return isShowing
         }
-        if (!TimerOverlayHelper.canDisplayToday(applicationContext)) {
+        if (enforceStandaloneDailyLimit && !TimerOverlayHelper.canDisplayToday(applicationContext)) {
             Log.d(TAG, "showOverlay skipped, one day max count reached")
-            return false
-        }
-        if (!TimerOverlayHelper.canDisplayByCooldown(applicationContext)) {
-            Log.d(TAG, "showOverlay skipped, cooldown")
             return false
         }
         removeOverlay()
@@ -329,8 +340,10 @@ class TimerOverlayService : Service() {
             }
             overlayView = view
             isShowing = true
-            TimerOverlayHelper.recordSuccessfulDisplay(applicationContext)
-            Log.d(TAG, "showOverlay success, display count and cooldown recorded")
+            if (enforceStandaloneDailyLimit) {
+                TimerOverlayHelper.recordSuccessfulDisplay(applicationContext)
+            }
+            Log.d(TAG, "showOverlay success standalone=$enforceStandaloneDailyLimit")
             if (isBanner) startBannerEnterAnimation(view)
             val displayContent = pendingDisplayContent
             if (displayContent?.shouldClearLastPdfInfoAfterDisplay == true) {

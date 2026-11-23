@@ -14,6 +14,7 @@ object TimerNotificationWorkManager {
     private const val TAG = "TimerNotificationWorkMgr"
     private const val MIN_PERIODIC_INTERVAL_MILLIS = 15L * 60L * 1000L
     private const val WORK_NAME_PREFIX = "pdf_flow_timer_notification_work_"
+    private const val WORK_TAG = "pdf_flow_timer_notification_work"
 
     fun schedule(context: Context, scheduleId: Int, update: Boolean) {
         val config =
@@ -25,17 +26,13 @@ object TimerNotificationWorkManager {
     fun restore(context: Context) {
         val appContext = context.applicationContext
         val configs = LocalNotificationScheduler.timerWorkConfigs(appContext)
-        val configuredSlots = configs.map { it.slot }.toSet()
-        configs.forEach { enqueue(appContext, it, update = false) }
-        (1..3).filterNot { it in configuredSlots }.forEach { slot ->
-            WorkManager.getInstance(appContext).cancelUniqueWork(workName(slot))
-        }
+        WorkManager.getInstance(appContext).cancelAllWorkByTag(WORK_TAG)
+        configs.forEach { enqueue(appContext, it, update = true) }
         Log.d(TAG, "restore count=${configs.size}")
     }
 
     fun cancelAll(context: Context) {
-        val workManager = WorkManager.getInstance(context.applicationContext)
-        (1..3).forEach { workManager.cancelUniqueWork(workName(it)) }
+        WorkManager.getInstance(context.applicationContext).cancelAllWorkByTag(WORK_TAG)
     }
 
     private fun enqueue(
@@ -53,10 +50,11 @@ object TimerNotificationWorkManager {
                         .putInt(INPUT_SCHEDULE_ID, config.scheduleId)
                         .build(),
                 )
-                .addTag(workName(config.slot))
+                .addTag(WORK_TAG)
+                .addTag(workName(config.scheduleId))
                 .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            workName(config.slot),
+            workName(config.scheduleId),
             if (update) ExistingPeriodicWorkPolicy.UPDATE else ExistingPeriodicWorkPolicy.KEEP,
             request,
         )
@@ -66,5 +64,5 @@ object TimerNotificationWorkManager {
         )
     }
 
-    private fun workName(slot: Int) = "$WORK_NAME_PREFIX$slot"
+    private fun workName(scheduleId: Int) = "$WORK_NAME_PREFIX$scheduleId"
 }

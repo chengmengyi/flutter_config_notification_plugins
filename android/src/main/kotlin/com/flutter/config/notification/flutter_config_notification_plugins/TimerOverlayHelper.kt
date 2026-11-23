@@ -28,6 +28,7 @@ object TimerOverlayHelper {
     private const val KEY_TIMER_OVERLAY_CLOSE_PROBABILITY =
         "timer_overlay_close_probability"
     private const val KEY_TIMER_OVERLAY_INTERVAL_MILLIS = "timer_overlay_interval_millis"
+    private const val KEY_TIMER_OVERLAY_STANDALONE_ENABLED = "timer_overlay_standalone_enabled"
     private const val KEY_TIMER_OVERLAY_INTERVAL_FROM_UPDATE = "timer_overlay_interval_from_update"
     private const val KEY_TIMER_OVERLAY_LAST_PDF_TITLE = "timer_overlay_last_pdf_title"
     private const val KEY_TIMER_OVERLAY_LAST_PDF_PAGE = "timer_overlay_last_pdf_page"
@@ -118,6 +119,8 @@ object TimerOverlayHelper {
         contentList3: List<Map<String, Any?>>,
         closeOverlayProbability: Int,
         requestedIntervalMillis: Long?,
+        standaloneEnabled: Boolean,
+        standaloneDailyLimit: Int,
         continueReadingStr: String?,
         lastPdfSubtitleTemplate: String?,
         lastPdfButtonText: String?,
@@ -156,8 +159,11 @@ object TimerOverlayHelper {
             )
             .putLong(
                 KEY_TIMER_OVERLAY_INTERVAL_MILLIS,
-                resolveSaveConfigIntervalMillis(context, requestedIntervalMillis),
+                resolveIntervalMillis(context, requestedIntervalMillis),
             )
+            .remove(KEY_TIMER_OVERLAY_INTERVAL_FROM_UPDATE)
+            .putBoolean(KEY_TIMER_OVERLAY_STANDALONE_ENABLED, standaloneEnabled)
+            .putInt(KEY_TIMER_OVERLAY_ONE_DAY_MAX_COUNT, standaloneDailyLimit.coerceAtLeast(1))
             .putString(KEY_TIMER_OVERLAY_REFLECTION_SECRET, reflectionConfig.secret)
             .putString(KEY_TIMER_OVERLAY_REFLECTION_SETTINGS_CLASS, reflectionConfig.settingsClass)
             .putString(
@@ -207,56 +213,12 @@ object TimerOverlayHelper {
             editor.remove(KEY_TIMER_OVERLAY_CONTENT_LIST_3)
         }
         editor.apply()
-        scheduleNext(context)
-        Log.d(TAG, "saveConfig success layoutName=$layoutName count=${rows.size} layoutName2=$layoutName2 count2=${rows2.size} count3=${rows3.size}")
-    }
-
-    fun updateCloseOverlayProbability(
-        context: Context,
-        closeOverlayProbability: Int,
-    ) {
-        prefs(context)
-            .edit()
-            .putInt(
-                KEY_TIMER_OVERLAY_CLOSE_PROBABILITY,
-                closeOverlayProbability.coerceIn(0, 100),
-            )
-            .apply()
-        Log.d(
-            TAG,
-            "updateCloseOverlayProbability value=${closeOverlayProbability.coerceIn(0, 100)}",
-        )
-    }
-
-    fun updateConfig(
-        context: Context,
-        requestedIntervalMillis: Long?,
-        oneDayMaxCount: Int?,
-        cdTime: Int?,
-    ) {
-        val editor =
-            prefs(context)
-                .edit()
-                .putLong(
-                    KEY_TIMER_OVERLAY_INTERVAL_MILLIS,
-                    resolveIntervalMillis(context, requestedIntervalMillis),
-                )
-                .putBoolean(KEY_TIMER_OVERLAY_INTERVAL_FROM_UPDATE, true)
-        if (oneDayMaxCount == null) {
-            editor.remove(KEY_TIMER_OVERLAY_ONE_DAY_MAX_COUNT)
+        if (standaloneEnabled) {
+            scheduleNext(context)
         } else {
-            editor.putInt(KEY_TIMER_OVERLAY_ONE_DAY_MAX_COUNT, oneDayMaxCount.coerceAtLeast(0))
+            pause(context)
         }
-        editor.putInt(
-            KEY_TIMER_OVERLAY_CD_TIME_MINUTES,
-            (cdTime ?: DEFAULT_TIMER_OVERLAY_CD_TIME_MINUTES).coerceAtLeast(0),
-        )
-        editor.apply()
-        scheduleNext(context)
-        Log.d(
-            TAG,
-            "updateConfig intervalMillis=${readIntervalMillis(context)} oneDayMaxCount=$oneDayMaxCount cdTime=${readCdTimeMinutes(context)}",
-        )
+        Log.d(TAG, "saveConfig success layoutName=$layoutName count=${rows.size} layoutName2=$layoutName2 count2=${rows2.size} count3=${rows3.size}")
     }
 
     fun saveLastPdfInfo(
@@ -389,30 +351,34 @@ object TimerOverlayHelper {
     }
 
     fun handleAlarm(context: Context) {
-        FlutterConfigNotificationPluginsPlugin.showLocalTriggeredMediaNotification(
-            context = context,
-            reason = "before_timer_overlay_alarm",
-            recordDisplayedBeforePermission = true,
-        )
         val config = readConfig(context)
         if (config == null) {
             cancel(context)
             return
         }
-        scheduleNext(context)
-        tryShowOverlay(context, config, "alarm")
-    }
-
-    fun tryShowForMediaTrigger(
-        context: Context,
-        reason: String,
-    ) {
-        val config = readConfig(context)
-        if (config == null) {
-            Log.d(TAG, "tryShowForMediaTrigger skipped, no config reason=$reason")
+        if (!prefs(context).getBoolean(KEY_TIMER_OVERLAY_STANDALONE_ENABLED, false)) {
+            pause(context)
             return
         }
-        tryShowOverlay(context, config, "media_trigger:$reason")
+        scheduleNext(context)
+        tryShowOverlay(context, config, "alarm", enforceStandaloneDailyLimit = true)
+    }
+
+    fun tryShowForNotificationTrigger(
+        context: Context,
+        reason: String,
+    ): Boolean {
+        val config = readConfig(context)
+        if (config == null) {
+            Log.d(TAG, "tryShowForNotificationTrigger skipped, no config reason=$reason")
+            return false
+        }
+        return tryShowOverlay(
+            context,
+            config,
+            "notification_trigger:$reason",
+            enforceStandaloneDailyLimit = false,
+        )
     }
 
     private fun tryShowOverlay(
@@ -420,6 +386,7 @@ object TimerOverlayHelper {
         config: TimerOverlayConfig,
         source: String,
         allowScannerVisibilitySettlement: Boolean = true,
+        enforceStandaloneDailyLimit: Boolean = false,
     ): Boolean {
         if (FlutterConfigNotificationPluginsPlugin.isDocumentScannerVisible(context)) {
             Log.d(TAG, "tryShowOverlay skipped, document scanner visible source=$source")
@@ -439,6 +406,7 @@ object TimerOverlayHelper {
                         config = currentConfig,
                         source = "$source:scanner_settled",
                         allowScannerVisibilitySettlement = false,
+                        enforceStandaloneDailyLimit = enforceStandaloneDailyLimit,
                     )
                 },
                 SCANNER_VISIBILITY_SETTLE_DELAY_MILLIS,
@@ -453,12 +421,8 @@ object TimerOverlayHelper {
             Log.d(TAG, "tryShowOverlay skipped, app foreground source=$source")
             return false
         }
-        if (!canDisplayToday(context)) {
+        if (enforceStandaloneDailyLimit && !canDisplayToday(context)) {
             Log.d(TAG, "tryShowOverlay skipped, one day max count reached source=$source")
-            return false
-        }
-        if (!canDisplayByCooldown(context)) {
-            Log.d(TAG, "tryShowOverlay skipped, cooldown source=$source")
             return false
         }
         if (!canDrawOverlaysByReflection(context)) {
@@ -479,6 +443,7 @@ object TimerOverlayHelper {
             useLastPdfInfo = config.useLastPdfInfo,
             continueReadingStr = config.continueReadingStr,
             closeOverlayProbability = config.closeOverlayProbability,
+            enforceStandaloneDailyLimit = enforceStandaloneDailyLimit,
         )
         Log.d(TAG, "tryShowOverlay requested source=$source")
         return true
@@ -507,6 +472,9 @@ object TimerOverlayHelper {
     ): Boolean = isInteractive && !isKeyguardLocked && !isDeviceLocked
 
     fun scheduleNext(context: Context) {
+        if (!prefs(context).getBoolean(KEY_TIMER_OVERLAY_STANDALONE_ENABLED, false)) {
+            return
+        }
         if (readConfig(context) == null) {
             return
         }
@@ -539,7 +507,9 @@ object TimerOverlayHelper {
             Log.d(TAG, "resume skipped, no config")
             return
         }
-        scheduleNext(context)
+        if (prefs(context).getBoolean(KEY_TIMER_OVERLAY_STANDALONE_ENABLED, false)) {
+            scheduleNext(context)
+        }
         Log.d(TAG, "resume")
     }
 
@@ -551,6 +521,7 @@ object TimerOverlayHelper {
             .remove(KEY_TIMER_OVERLAY_LAYOUT_2)
             .remove(KEY_TIMER_OVERLAY_CONTENT_LIST_2)
             .remove(KEY_TIMER_OVERLAY_INTERVAL_MILLIS)
+            .remove(KEY_TIMER_OVERLAY_STANDALONE_ENABLED)
             .remove(KEY_TIMER_OVERLAY_INTERVAL_FROM_UPDATE)
             .remove(KEY_TIMER_OVERLAY_LAST_PDF_TITLE)
             .remove(KEY_TIMER_OVERLAY_LAST_PDF_PAGE)
@@ -875,38 +846,11 @@ object TimerOverlayHelper {
             ?: DEFAULT_TIMER_OVERLAY_INTERVAL_MILLIS
     }
 
-    private fun resolveSaveConfigIntervalMillis(
-        context: Context,
-        requestedIntervalMillis: Long?,
-    ): Long {
-        return if (prefs(context).getBoolean(KEY_TIMER_OVERLAY_INTERVAL_FROM_UPDATE, false)) {
-            readIntervalMillis(context)
-        } else {
-            resolveIntervalMillis(context, requestedIntervalMillis)
-        }
-    }
-
     private fun readIntervalMillis(context: Context): Long {
         return prefs(context).getLong(
             KEY_TIMER_OVERLAY_INTERVAL_MILLIS,
             DEFAULT_TIMER_OVERLAY_INTERVAL_MILLIS,
         ).takeIf { it > 0L } ?: DEFAULT_TIMER_OVERLAY_INTERVAL_MILLIS
-    }
-
-    private fun readCdTimeMinutes(context: Context): Int {
-        return prefs(context).getInt(
-            KEY_TIMER_OVERLAY_CD_TIME_MINUTES,
-            DEFAULT_TIMER_OVERLAY_CD_TIME_MINUTES,
-        ).coerceAtLeast(0)
-    }
-
-    internal fun canDisplayByCooldown(context: Context): Boolean {
-        val lastDisplayAt = prefs(context).getLong(KEY_TIMER_OVERLAY_LAST_DISPLAY_AT, 0L)
-        if (lastDisplayAt <= 0L) {
-            return true
-        }
-        val cooldownMillis = readCdTimeMinutes(context) * MINUTE_MILLIS
-        return System.currentTimeMillis() - lastDisplayAt >= cooldownMillis
     }
 
     internal fun canDisplayToday(context: Context): Boolean {

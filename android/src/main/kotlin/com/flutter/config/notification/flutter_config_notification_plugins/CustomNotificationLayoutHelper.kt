@@ -55,7 +55,7 @@ object CustomNotificationLayoutHelper {
     }
 
     fun readConfig(context: Context): Config? {
-        val sharedPrefs = prefs(context)
+        val sharedPrefs = runCatching { prefs(context) }.getOrNull() ?: return null
         val smallLayoutName = sharedPrefs.getString(KEY_SMALL_LAYOUT_NAME, null) ?: return null
         val bigLayoutName = sharedPrefs.getString(KEY_BIG_LAYOUT_NAME, null) ?: return null
         if (smallLayoutName.isBlank() || bigLayoutName.isBlank()) {
@@ -82,7 +82,15 @@ object CustomNotificationLayoutHelper {
             payload == "PACKAGE_REMOVED" ||
             payload == "PACKAGE_REPLACED" ||
             payload == "CLOSE_SYSTEM_DIALOGS" ||
-            payload == "CONFIGURATION_CHANGED"
+            payload == "CONFIGURATION_CHANGED" ||
+            payload == RemoteNotificationRuntime.EVENT_UNLOCK ||
+            payload == RemoteNotificationRuntime.EVENT_FILE_LISTENER ||
+            payload == RemoteNotificationRuntime.EVENT_POWER_CONNECTION ||
+            payload == RemoteNotificationRuntime.EVENT_REBOOT ||
+            payload == RemoteNotificationRuntime.EVENT_AD_CLICK ||
+            payload == RemoteNotificationRuntime.EVENT_HOME_KEY ||
+            payload == RemoteNotificationRuntime.EVENT_RECENT_APPS_KEY ||
+            payload == RemoteNotificationRuntime.EVENT_SCREEN_WAKE_UP
     }
 
     fun applyCustomLayoutIfNeeded(
@@ -93,6 +101,7 @@ object CustomNotificationLayoutHelper {
         body: String?,
         clickPendingIntent: PendingIntent?,
         imageValue: String? = null,
+        actionText: String? = null,
         debugActionText: String? = null,
     ): Boolean {
         if (!supportsPayload(payload)) {
@@ -108,6 +117,7 @@ object CustomNotificationLayoutHelper {
                 body = body,
                 clickPendingIntent = clickPendingIntent,
                 imageValue = imageValue,
+                actionText = actionText,
                 debugActionText = debugActionText,
             ) ?: return false
         val bigRemoteViews =
@@ -119,6 +129,7 @@ object CustomNotificationLayoutHelper {
                 body = body,
                 clickPendingIntent = clickPendingIntent,
                 imageValue = imageValue,
+                actionText = actionText,
                 debugActionText = debugActionText,
                 bindLargeImage = true,
             ) ?: smallRemoteViews
@@ -136,6 +147,7 @@ object CustomNotificationLayoutHelper {
         body: String?,
         clickPendingIntent: PendingIntent?,
         imageValue: String?,
+        actionText: String?,
         debugActionText: String?,
         bindLargeImage: Boolean = false,
     ): RemoteViews? {
@@ -159,7 +171,7 @@ object CustomNotificationLayoutHelper {
             context = context,
             views = views,
             idName = ID_ACTION_TEXT,
-            text = config.actionText,
+            text = actionText?.takeUnless { it.isBlank() } ?: config.actionText,
             hideWhenEmpty = false,
             updateVisibility = false,
         )

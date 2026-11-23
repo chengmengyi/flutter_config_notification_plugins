@@ -245,52 +245,29 @@ debugPrint('平台版本: $version');
 
 ## 周期通知
 
-循环间隔统一使用 `initNotification` 中的 `localInterval`，本地通知和媒体通知接口不再单独传间隔。
+定时任务、通道、文案、间隔和上限均读取 `initNotification` 保存的远端配置。
 
 ### 固定间隔循环提醒
 
 ```dart
-await notificationPlugin.periodicallyShowLocalWithDuration(
-  id: 100,
-  title: '喝水提醒',
-  body: '记得补充水分',
-);
+await notificationPlugin.periodicallyShowLocalWithDuration();
 ```
 
 ### 注册广播通知
 
-广播类型只传 `LocalNotificationPayload` 列表。`BATTERY_CHANGED` 使用 `batteryChanged`，其余广播使用 `actionInterval`。
+广播开关、类型、文案、延迟和每日上限均读取远端配置。
 
 ```dart
-await notificationPlugin.registerBroadcastNotifications(
-  notificationList: const [
-    LocalNotificationContent(title: '提醒', body: '有新的系统事件'),
-  ],
-  payloadList: const [
-    LocalNotificationPayload.batteryChanged,
-    LocalNotificationPayload.screenOn,
-    LocalNotificationPayload.actionPowerConnected,
-  ],
-);
+await notificationPlugin.registerBroadcastNotifications();
 ```
 
-### 使用候选通知内容随机展示
+广告点击通知同样读取远端广播配置；应用在前台时不会展示：
 
 ```dart
-await notificationPlugin.periodicallyShowLocalWithDuration(
-  id: 101,
-  notificationList: const [
-    LocalNotificationContent(
-      title: '休息一下',
-      body: '起来活动活动',
-    ),
-    LocalNotificationContent(
-      title: '喝口水',
-      body: '别忘了补水',
-    ),
-  ],
-);
+final accepted = await notificationPlugin.clickAdShowNotification();
 ```
+
+候选通知内容由远端 `scheduled_notification_arr[].copy_pool` 随机选择。
 
 ### Android 自定义通知参数
 
@@ -360,22 +337,7 @@ final setMediaSessionMethod =
 );
 
 await notificationPlugin.periodicallyShowMediaWithDuration(
-  id: 102,
-  notificationDetails: AndroidNotificationDetails(
-    'media_channel',
-    'Media Notifications',
-    channelDescription: 'media notifications',
-    styleInformation: const MediaStyleInformation(image: 'home'),
-    priority: Priority.high,
-    importance: Importance.high,
-    replaceExisting: true,
-  ),
-  notificationList: const [
-    LocalNotificationContent(
-      title: '媒体通知',
-      body: '这是一条媒体样式通知',
-    ),
-  ],
+  image: 'notification_logo',
   reflectionConfig: MediaReflectionConfig(
     secret: secret,
     mediaSessionClass: mediaSessionClass,

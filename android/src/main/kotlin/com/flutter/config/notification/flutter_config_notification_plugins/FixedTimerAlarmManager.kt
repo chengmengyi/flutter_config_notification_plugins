@@ -26,13 +26,13 @@ object FixedTimerAlarmManager {
     fun schedule(context: Context, scheduleId: Int, update: Boolean) {
         val config =
             LocalNotificationScheduler.timerWorkConfigs(context)
-                .firstOrNull { it.scheduleId == scheduleId } ?: return
+                .firstOrNull { it.scheduleId == scheduleId && it.slot in 1..3 } ?: return
         scheduleSlot(context.applicationContext, config, resetTime = update)
     }
 
     fun restore(context: Context) {
         val appContext = context.applicationContext
-        val configs = LocalNotificationScheduler.timerWorkConfigs(appContext)
+        val configs = LocalNotificationScheduler.timerWorkConfigs(appContext).filter { it.slot in 1..3 }
         val configuredSlots = configs.map { it.slot }.toSet()
         configs.forEach { scheduleSlot(appContext, it, resetTime = false) }
         (1..3).filterNot { it in configuredSlots }.forEach { cancelSlot(appContext, it, clear = true) }

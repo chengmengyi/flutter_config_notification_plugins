@@ -75,8 +75,6 @@ internal class RemoteNotificationConfigStoreTest {
                     "data.notification.scheduled_notification_arr[]" to "avid",
                     "data.notification.scheduled_notification_arr[].id" to "starboard",
                 ),
-            schemaRevision = 8,
-            mappingRevision = 2,
             timeoutMilliseconds = 10_000,
             maxAttempts = 1,
             retryDelayMilliseconds = emptyList(),

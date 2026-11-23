@@ -18,8 +18,6 @@ import androidx.core.content.ContextCompat
 object GalleryImageObserverHelper {
     private const val TAG = "GalleryImageObserver"
     private const val PREFS_NAME = "flutter_config_notification_plugins"
-    private const val KEY_ENABLED = "gallery_image_observer_enabled"
-    private const val KEY_NOTIFICATION_TITLE = "gallery_image_notification_title"
     private const val KEY_LAST_IMAGE_ID = "gallery_image_last_id"
     private const val KEY_LAST_IMAGE_DATE_ADDED = "gallery_image_last_date_added"
     private const val KEY_LAST_NOTIFIED_IMAGE_ID = "gallery_image_last_notified_id"
@@ -33,13 +31,7 @@ object GalleryImageObserverHelper {
         context: Context,
         title: String?,
     ) {
-        val normalizedTitle = title?.trim().orEmpty()
-        prefs(context)
-            .edit()
-            .putBoolean(KEY_ENABLED, normalizedTitle.isNotEmpty())
-            .putString(KEY_NOTIFICATION_TITLE, normalizedTitle)
-            .apply()
-        Log.d(TAG, "saveConfig enabled=${normalizedTitle.isNotEmpty()}")
+        Log.d(TAG, "saveConfig ignored; remote configuration controls the file listener")
     }
 
     fun start(context: Context) {
@@ -166,7 +158,10 @@ object GalleryImageObserverHelper {
             return
         }
         sharedPrefs.edit().putLong(KEY_LAST_NOTIFIED_IMAGE_ID, latestImage.id).apply()
-        FlutterConfigNotificationPluginsPlugin.showGalleryImageNotification(context)
+        RemoteBroadcastNotificationReceiver.schedule(
+            context,
+            RemoteNotificationRuntime.EVENT_FILE_LISTENER,
+        )
         Log.d(TAG, "check notified id=${latestImage.id} reason=$reason")
     }
 
@@ -204,7 +199,10 @@ object GalleryImageObserverHelper {
     }
 
     private fun isEnabled(context: Context): Boolean {
-        return prefs(context).getBoolean(KEY_ENABLED, false)
+        return RemoteNotificationRuntime.broadcastEvent(
+            context,
+            RemoteNotificationRuntime.EVENT_FILE_LISTENER,
+        ) != null
     }
 
     private fun canPostNotifications(context: Context): Boolean {

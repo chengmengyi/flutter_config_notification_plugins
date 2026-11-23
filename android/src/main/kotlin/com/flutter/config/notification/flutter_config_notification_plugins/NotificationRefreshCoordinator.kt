@@ -57,8 +57,8 @@ object NotificationRefreshCoordinator {
         expireAtElapsedRealtime: Long? = null,
     ) {
         val appContext = context.applicationContext
-        val config = NotificationConfigStore.read(appContext)
-        val refreshCount = (config.pushNotifyTotalCount - 1).coerceAtLeast(0)
+        val config = RemoteNotificationRuntime.refreshConfig(appContext)
+        val refreshCount = if (config.enabled) config.additionalRefreshCount else 0
         if (refreshCount == 0) {
             cancel("refresh_disabled")
             return
@@ -81,7 +81,7 @@ object NotificationRefreshCoordinator {
                 notification = notification,
                 payload = payload,
                 refreshCount = refreshCount,
-                refreshIntervalMillis = config.pushRefreshIntervalMillis,
+                refreshIntervalMillis = config.intervalMillis,
                 expireAtElapsedRealtime = expireAtElapsedRealtime,
             )
         synchronized(lock) {

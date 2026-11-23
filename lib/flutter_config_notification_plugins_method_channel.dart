@@ -204,53 +204,17 @@ class MethodChannelFlutterConfigNotificationPlugins
   @override
   Future<void> setTimerOverlayInfo({
     required String layoutName,
-    required List<Map<String, Object?>> contentList,
-    required int closeOverlayProbability,
     String? layoutName2,
-    List<Map<String, Object?>>? contentList2,
     List<Map<String, Object?>>? contentList3,
     required String continueReadingStr,
-    required String lastPdfSubtitleTemplate,
-    required String lastPdfButtonText,
     required Map<String, Object?> reflectionConfig,
-    Duration timerInterval = const Duration(minutes: 20),
   }) {
     return methodChannel.invokeMethod<void>('setTimerOverlayInfo', {
       'layoutName': layoutName,
-      'contentList': contentList,
-      'closeOverlayProbability': closeOverlayProbability,
       'layoutName2': layoutName2,
-      'contentList2': contentList2,
       'contentList3': contentList3,
       'continueReadingStr': continueReadingStr,
-      'lastPdfSubtitleTemplate': lastPdfSubtitleTemplate,
-      'lastPdfButtonText': lastPdfButtonText,
       'reflectionConfig': reflectionConfig,
-      'timerIntervalMilliseconds': timerInterval.inMilliseconds,
-    });
-  }
-
-  /// 通过原生通道更新悬浮窗关闭按钮真正关闭的概率。
-  @override
-  Future<void> updateCloseOverlayProbability({
-    required int closeOverlayProbability,
-  }) {
-    return methodChannel.invokeMethod<void>('updateCloseOverlayProbability', {
-      'closeOverlayProbability': closeOverlayProbability,
-    });
-  }
-
-  /// 通过原生通道更新定时悬浮窗信息。
-  @override
-  Future<void> updateTimerOverlayInfo({
-    required Duration timerInterval,
-    int? oneDayMaxCount,
-    int? cdTime,
-  }) {
-    return methodChannel.invokeMethod<void>('updateTimerOverlayInfo', {
-      'timerIntervalMilliseconds': timerInterval.inMilliseconds,
-      'oneDayMaxCount': oneDayMaxCount,
-      'cdTime': cdTime,
     });
   }
 
@@ -470,56 +434,34 @@ class MethodChannelFlutterConfigNotificationPlugins
 
   /// 通过原生通道按时间间隔循环展示本地通知。
   @override
-  Future<void> periodicallyShowLocalWithDuration({
-    required int id,
-    String? title,
-    String? body,
-    Map<String, Object?>? notificationDetails,
-    List<Map<String, Object?>>? notificationList,
-  }) {
-    return methodChannel
-        .invokeMethod<void>('periodicallyShowLocalWithDuration', {
-          'id': id,
-          'title': title,
-          'body': body,
-          'notificationDetails': notificationDetails,
-          'notificationList': notificationList,
-        });
+  Future<void> periodicallyShowLocalWithDuration() {
+    return methodChannel.invokeMethod<void>(
+      'periodicallyShowLocalWithDuration',
+    );
   }
 
   /// 通过原生通道按时间间隔循环展示媒体通知。
   @override
   Future<void> periodicallyShowMediaWithDuration({
-    required int id,
-    String? title,
-    String? body,
-    String? mediaBackgroundImageName,
-    Map<String, Object?>? notificationDetails,
-    required List<Map<String, Object?>> notificationList,
+    required String image,
     required Map<String, Object?> reflectionConfig,
   }) {
-    return methodChannel
-        .invokeMethod<void>('periodicallyShowMediaWithDuration', {
-          'id': id,
-          'title': title,
-          'body': body,
-          'mediaBackgroundImageName': mediaBackgroundImageName,
-          'notificationDetails': notificationDetails,
-          'notificationList': notificationList,
-          'reflectionConfig': reflectionConfig,
-        });
+    return methodChannel.invokeMethod<void>(
+      'periodicallyShowMediaWithDuration',
+      {'image': image, 'reflectionConfig': reflectionConfig},
+    );
   }
 
   /// 通过原生通道注册广播触发通知。
   @override
-  Future<void> registerBroadcastNotifications({
-    List<Map<String, Object?>>? notificationList,
-    required List<String> payloadList,
-  }) {
-    return methodChannel.invokeMethod<void>('registerBroadcastNotifications', {
-      'notificationList': notificationList,
-      'payloadList': payloadList,
-    });
+  Future<void> registerBroadcastNotifications() {
+    return methodChannel.invokeMethod<void>('registerBroadcastNotifications');
+  }
+
+  @override
+  Future<bool> clickAdShowNotification() async {
+    return await methodChannel.invokeMethod<bool>('clickAdShowNotification') ??
+        false;
   }
 
   /// 处理原生层主动回传的方法调用。

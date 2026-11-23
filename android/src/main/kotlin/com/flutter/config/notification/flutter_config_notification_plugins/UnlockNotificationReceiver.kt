@@ -5,14 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 
 class UnlockNotificationReceiver : BroadcastReceiver() {
     companion object {
         private val instances = mutableMapOf<String, UnlockNotificationReceiver>()
-        private val mainHandler = Handler(Looper.getMainLooper())
 
         fun add(
             context: Context,
@@ -82,38 +79,10 @@ class UnlockNotificationReceiver : BroadcastReceiver() {
                 "LocalNotificationPlugin",
                 "UnlockNotificationReceiver.onReceive action=${intent.action}",
             )
-            if (intent.action == Intent.ACTION_CLOSE_SYSTEM_DIALOGS) {
-                val delayMillis =
-                    FlutterConfigNotificationPluginsPlugin
-                        .getCloseSystemDialogsDelayMillis(context.applicationContext)
-                if (delayMillis > 0L) {
-                    val appContext = context.applicationContext
-                    mainHandler.postDelayed(
-                        {
-                            try {
-                                FlutterConfigNotificationPluginsPlugin.handleUnlockBroadcast(
-                                    appContext,
-                                    Intent.ACTION_CLOSE_SYSTEM_DIALOGS,
-                                )
-                            } catch (e: Exception) {
-                                Log.d(
-                                    "LocalNotificationPlugin",
-                                    "UnlockNotificationReceiver delayed failed action=${intent.action} error=${e.message}",
-                                )
-                            }
-                        },
-                        delayMillis,
-                    )
-                    Log.d(
-                        "LocalNotificationPlugin",
-                        "UnlockNotificationReceiver delayed action=${intent.action} millis=$delayMillis",
-                    )
-                    return
-                }
-            }
             FlutterConfigNotificationPluginsPlugin.handleUnlockBroadcast(
                 context,
                 intent.action,
+                intent.getStringExtra("reason"),
             )
         } catch (e: Exception) {
             Log.d(
