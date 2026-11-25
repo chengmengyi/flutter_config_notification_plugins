@@ -44,6 +44,7 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.plugin.common.PluginRegistry
+import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -76,6 +77,10 @@ class FlutterConfigNotificationPluginsPlugin :
         private const val KEY_CHANNEL_NAME = "channel_name"
         private const val KEY_CHANNEL_DESCRIPTION = "channel_description"
         private const val KEY_NOTIFICATION_ICON_NAME = "notification_icon_name"
+        private const val KEY_REMOTE_NOTIFICATION_INITIALIZED =
+            "remote_notification_initialized"
+        private const val KEY_REMOTE_BROADCAST_INITIALIZED =
+            "remote_broadcast_initialized"
         private const val KEY_FCM_CHANNEL_ID = "fcm_channel_id"
         private const val KEY_FCM_CHANNEL_NAME = "fcm_channel_name"
         private const val KEY_FCM_CHANNEL_DESCRIPTION = "fcm_channel_description"
@@ -192,6 +197,7 @@ class FlutterConfigNotificationPluginsPlugin :
         private const val MEDIA_UNIQUE_NOTIFICATION_ID = 10005
         private const val GALLERY_IMAGE_NOTIFICATION_BASE_ID = 10007
         private const val MEDIA_UNIQUE_TAG = "media_notification_unique"
+        private const val MEDIA_BUSINESS_TAG_PREFIX = "media_notification_business_"
         private const val SHORTCUT_CHANNEL_NAME = "PDF Flow Shortcuts"
         private const val SHORTCUT_CHANNEL_DESCRIPTION = "PDF Flow shortcut notification"
         private const val REQUEST_CODE_OVERLAY_PERMISSION = 14589
@@ -818,6 +824,7 @@ class FlutterConfigNotificationPluginsPlugin :
             actionText: String? = null,
             debugActionText: String? = null,
             replaceExistingMedia: Boolean = false,
+            mediaReplacementKey: String? = null,
             recordDisplayedBeforePermission: Boolean = false,
             dispatchDisplayedAfterNotify: Boolean = true,
             allowTimerOverlayStart: Boolean = true,
@@ -934,6 +941,7 @@ class FlutterConfigNotificationPluginsPlugin :
                                         actionText = actionText,
                                         debugActionText = debugActionText,
                                         replaceExistingMedia = replaceExistingMedia,
+                                        mediaReplacementKey = mediaReplacementKey,
                                         recordDisplayedBeforePermission = false,
                                         dispatchDisplayedAfterNotify = dispatchDisplayedAfterNotify,
                                         allowTimerOverlayStart = allowTimerOverlayStart,
@@ -966,9 +974,12 @@ class FlutterConfigNotificationPluginsPlugin :
                     cleanPushTimeoutMillis?.let { SystemClock.elapsedRealtime() + it }
                 val notificationManager = NotificationManagerCompat.from(context)
                 val useUniqueMediaNotification = replaceExistingMedia && payload == "media"
+                val mediaBusinessKey =
+                    mediaReplacementKey?.trim()?.takeUnless { it.isBlank() }
+                        ?: baseId.toString()
                 val notificationDisplayTag: String? =
                     if (useUniqueMediaNotification) {
-                        MEDIA_UNIQUE_TAG
+                        MEDIA_BUSINESS_TAG_PREFIX + mediaBusinessKey
                     } else if (payload == "media") {
                         null
                     } else {
@@ -976,7 +987,7 @@ class FlutterConfigNotificationPluginsPlugin :
                     }
                 val notificationDisplayId =
                     if (useUniqueMediaNotification) {
-                        MEDIA_UNIQUE_NOTIFICATION_ID
+                        stableNotificationId("media_business:$mediaBusinessKey")
                     } else {
                         id
                     }
@@ -1957,7 +1968,8 @@ class FlutterConfigNotificationPluginsPlugin :
                 priority = NotificationCompat.PRIORITY_HIGH,
                 importance = NotificationManager.IMPORTANCE_HIGH,
                 mediaImage = mediaImage,
-                replaceExistingMedia = false,
+                replaceExistingMedia = true,
+                mediaReplacementKey = remoteMedia.id,
                 recordDisplayedBeforePermission = false,
                 dispatchDisplayedAfterNotify = true,
             )
@@ -2284,6 +2296,7 @@ class FlutterConfigNotificationPluginsPlugin :
     private var lifecycleHandler: Handler? = null
     private var pendingBackgroundRunnable: Runnable? = null
     private val remoteConfigExecutor = Executors.newSingleThreadExecutor()
+    private val remoteConfigRequestGeneration = AtomicLong(0L)
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         applicationContext = flutterPluginBinding.applicationContext
@@ -2382,6 +2395,7 @@ class FlutterConfigNotificationPluginsPlugin :
                         ?: mapOf("didNotificationLaunchApp" to false),
                 )
             "initNotification" -> initNotification(call, result)
+            "updateNotificationConfig" -> updateNotificationConfig(call, result)
             "subscribeToTopic" -> subscribeToTopic(call, result)
             "showPersistentShortcutNotification" -> showPersistentShortcutNotification(call, result)
             "show" -> show(call, result)
@@ -2656,7 +2670,7 @@ class FlutterConfigNotificationPluginsPlugin :
                     "title" to copy.title,
                     "subtitle" to copy.body,
                     "button" to copy.buttonText,
-                    "button2" to "Later",
+                    "button2" to copy.secondaryButtonText,
                 )
             }
         val closeOverlayProbability =
@@ -2737,6 +2751,7 @@ class FlutterConfigNotificationPluginsPlugin :
         result: Result,
     ) {
         RemoteNotificationRuntime.rememberInstallTimeIfAbsent(applicationContext)
+        val requestGeneration = remoteConfigRequestGeneration.incrementAndGet()
         val remoteRequest =
             try {
                 RemoteNotificationRequest.fromMap(
@@ -2752,9 +2767,15 @@ class FlutterConfigNotificationPluginsPlugin :
                 RemoteNotificationConfigStore.fetchDecodeAndSave(
                     applicationContext,
                     remoteRequest,
+                    shouldSave = {
+                        requestGeneration == remoteConfigRequestGeneration.get()
+                    },
                 )
             Handler(Looper.getMainLooper()).post {
-                if (remoteConfig == null) {
+                if (
+                    requestGeneration != remoteConfigRequestGeneration.get() ||
+                    remoteConfig == null
+                ) {
                     result.success(false)
                     return@post
                 }
@@ -2767,11 +2788,97 @@ class FlutterConfigNotificationPluginsPlugin :
                 }
                 try {
                     initializeNotificationAfterRemoteConfig(call, remoteConfig)
+                    prefs(applicationContext)
+                        .edit()
+                        .putBoolean(KEY_REMOTE_NOTIFICATION_INITIALIZED, true)
+                        .commit()
                     result.success(true)
                 } catch (error: Exception) {
                     result.success(false)
                 }
             }
+        }
+    }
+
+    private fun updateNotificationConfig(
+        call: MethodCall,
+        result: Result,
+    ) {
+        if (!prefs(applicationContext).getBoolean(KEY_REMOTE_NOTIFICATION_INITIALIZED, false)) {
+            result.success("failed")
+            return
+        }
+        val requestGeneration = remoteConfigRequestGeneration.incrementAndGet()
+        val remoteRequest =
+            try {
+                RemoteNotificationRequest.fromMap(
+                    call.argument<Map<String, Any?>>("remoteRequest")
+                        ?: throw IllegalArgumentException("remoteRequest is required"),
+                )
+            } catch (error: Exception) {
+                result.success("failed")
+                return
+            }
+        remoteConfigExecutor.execute {
+            val previousConfig = RemoteNotificationConfigStore.snapshot(applicationContext)
+            val remoteConfig =
+                RemoteNotificationConfigStore.fetchDecodeAndSave(
+                    applicationContext,
+                    remoteRequest,
+                    shouldSave = {
+                        requestGeneration == remoteConfigRequestGeneration.get()
+                    },
+                )
+            Handler(Looper.getMainLooper()).post {
+                if (
+                    requestGeneration != remoteConfigRequestGeneration.get() ||
+                    remoteConfig == null
+                ) {
+                    result.success("failed")
+                    return@post
+                }
+                try {
+                    val enabled = remoteConfig.notification.getBoolean("enabled")
+                    applyUpdatedRemoteNotificationConfig(enabled)
+                    result.success(if (enabled) "enabled" else "disabled")
+                } catch (error: Exception) {
+                    if (requestGeneration == remoteConfigRequestGeneration.get()) {
+                        RemoteNotificationConfigStore.restore(applicationContext, previousConfig)
+                        val previousEnabled =
+                            previousConfig.notification
+                                ?.let { raw -> runCatching { JSONObject(raw) }.getOrNull() }
+                                ?.optBoolean("enabled", false) == true
+                        runCatching { applyUpdatedRemoteNotificationConfig(previousEnabled) }
+                    }
+                    result.success("failed")
+                }
+            }
+        }
+    }
+
+    private fun applyUpdatedRemoteNotificationConfig(enabled: Boolean) {
+        NotificationRefreshCoordinator.cancel("remote_config_updated")
+        RemoteNotificationScheduleCoordinator.restore(applicationContext)
+        RemoteBroadcastNotificationReceiver.cancelAll(applicationContext)
+
+        val broadcastWasInitialized =
+            prefs(applicationContext).getBoolean(KEY_REMOTE_BROADCAST_INITIALIZED, false)
+        if (broadcastWasInitialized) {
+            restoreBroadcastReceivers(applicationContext)
+        } else if (
+            !enabled ||
+            RemoteNotificationRuntime.read(applicationContext)?.broadcastEnabled != true
+        ) {
+            BroadcastNotificationReceiverManager.disable(applicationContext)
+            GalleryImageObserverHelper.stop(applicationContext)
+        }
+
+        TimerOverlayHelper.refreshRemoteConfig(
+            context = applicationContext,
+            floating = RemoteNotificationRuntime.floatingConfig(applicationContext),
+        )
+        if (enabled) {
+            InProcessTimerManager.start(applicationContext)
         }
     }
 
@@ -3125,6 +3232,10 @@ class FlutterConfigNotificationPluginsPlugin :
         call: MethodCall,
         result: Result,
     ) {
+        prefs(applicationContext)
+            .edit()
+            .putBoolean(KEY_REMOTE_BROADCAST_INITIALIZED, true)
+            .apply()
         restoreBroadcastReceivers(applicationContext)
         result.success(null)
     }

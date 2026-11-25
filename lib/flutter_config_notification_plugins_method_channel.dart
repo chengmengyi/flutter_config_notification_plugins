@@ -379,6 +379,16 @@ class MethodChannelFlutterConfigNotificationPlugins
     return result ?? false;
   }
 
+  /// 通过原生通道重新拉取并应用远程通知配置。
+  @override
+  Future<String?> updateNotificationConfig({
+    required Map<String, Object?> remoteRequest,
+  }) {
+    return methodChannel.invokeMethod<String>('updateNotificationConfig', {
+      'remoteRequest': remoteRequest,
+    });
+  }
+
   /// 通过原生通道显示常驻快捷通知。
   @override
   Future<void> showPersistentShortcutNotification({

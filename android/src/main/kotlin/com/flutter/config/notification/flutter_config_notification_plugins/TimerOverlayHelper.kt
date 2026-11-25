@@ -221,6 +221,85 @@ object TimerOverlayHelper {
         Log.d(TAG, "saveConfig success layoutName=$layoutName count=${rows.size} layoutName2=$layoutName2 count2=${rows2.size} count3=${rows3.size}")
     }
 
+    internal fun refreshRemoteConfig(
+        context: Context,
+        floating: RemoteFloatingWindowConfig?,
+    ) {
+        val sharedPrefs = prefs(context)
+        val hasLocalSetup =
+            !sharedPrefs.getString(KEY_TIMER_OVERLAY_LAYOUT, null).isNullOrBlank() &&
+                readReflectionConfig(context) != null
+        if (!hasLocalSetup) {
+            Log.d(TAG, "refreshRemoteConfig skipped, setTimerOverlayInfo not initialized")
+            return
+        }
+        if (floating == null || floating.copyPool.isEmpty()) {
+            sharedPrefs.edit().putBoolean(KEY_TIMER_OVERLAY_STANDALONE_ENABLED, false).apply()
+            pause(context)
+            Log.d(TAG, "refreshRemoteConfig suspended")
+            return
+        }
+
+        val contentList =
+            floating.copyPool.map { copy ->
+                mapOf<String, Any?>(
+                    "title" to copy.title,
+                    "subtitle" to copy.body,
+                    "button" to copy.buttonText,
+                )
+            }
+        val contentList2 =
+            floating.copyPool.map { copy ->
+                mapOf<String, Any?>(
+                    "title" to copy.title,
+                    "subtitle" to copy.body,
+                    "button" to copy.buttonText,
+                    "button2" to copy.secondaryButtonText,
+                )
+            }
+        val rows = encodeContentRows(contentList)
+        val rows2 = encodeContentRows(contentList2)
+        if (rows.isEmpty()) {
+            sharedPrefs.edit().putBoolean(KEY_TIMER_OVERLAY_STANDALONE_ENABLED, false).apply()
+            pause(context)
+            Log.d(TAG, "refreshRemoteConfig suspended, copy pool has no usable content")
+            return
+        }
+        TimerOverlayService.close(context)
+        val closeProbability =
+            if (floating.misclickEnabled) 100 - floating.misclickPercent else 100
+        val editor =
+            sharedPrefs.edit()
+                .putString(KEY_TIMER_OVERLAY_CONTENT_LIST, JSONArray(rows).toString())
+                .putInt(KEY_TIMER_OVERLAY_CLOSE_PROBABILITY, closeProbability.coerceIn(0, 100))
+                .putLong(
+                    KEY_TIMER_OVERLAY_INTERVAL_MILLIS,
+                    floating.standaloneIntervalMinutes.toLong().coerceAtLeast(1L) * MINUTE_MILLIS,
+                )
+                .remove(KEY_TIMER_OVERLAY_INTERVAL_FROM_UPDATE)
+                .putBoolean(
+                    KEY_TIMER_OVERLAY_STANDALONE_ENABLED,
+                    floating.standaloneEnabled,
+                )
+                .putInt(
+                    KEY_TIMER_OVERLAY_ONE_DAY_MAX_COUNT,
+                    floating.standaloneDailyLimit.coerceAtLeast(1),
+                )
+        if (!sharedPrefs.getString(KEY_TIMER_OVERLAY_LAYOUT_2, null).isNullOrBlank()) {
+            editor.putString(KEY_TIMER_OVERLAY_CONTENT_LIST_2, JSONArray(rows2).toString())
+        }
+        editor.apply()
+        if (floating.standaloneEnabled) {
+            scheduleNext(context)
+        } else {
+            pause(context)
+        }
+        Log.d(
+            TAG,
+            "refreshRemoteConfig success count=${rows.size} standalone=${floating.standaloneEnabled}",
+        )
+    }
+
     fun saveLastPdfInfo(
         context: Context,
         title: String,

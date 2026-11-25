@@ -50,6 +50,8 @@ public class FlutterConfigNotificationPluginsPlugin: NSObject, FlutterPlugin, UN
       result(getNotificationAppLaunchDetails())
     case "initNotification":
       initNotification(call, result: result)
+    case "updateNotificationConfig":
+      result("failed")
     case "show":
       show(call, result: result)
     case "periodicallyShowWithDuration":

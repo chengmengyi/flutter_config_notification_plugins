@@ -20,6 +20,7 @@ internal data class RemoteCopyItem(
     val body: String,
     val image: String,
     val buttonText: String,
+    val secondaryButtonText: String,
 )
 
 internal data class RemoteScheduledNotification(
@@ -553,6 +554,7 @@ internal object RemoteNotificationRuntime {
                 body = item.optString("body"),
                 image = item.optString("image"),
                 buttonText = item.optString("button_text"),
+                secondaryButtonText = item.optString("secondary_button_text"),
             )
         }
 

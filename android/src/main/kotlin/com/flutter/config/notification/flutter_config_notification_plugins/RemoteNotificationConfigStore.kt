@@ -185,6 +185,12 @@ internal data class DecodedRemoteNotificationConfig(
     val notification: JSONObject,
 )
 
+internal data class RemoteNotificationConfigSnapshot(
+    val response: String?,
+    val notification: String?,
+    val fetchedAt: Long,
+)
+
 internal object RemoteNotificationConfigStore {
     private const val TAG = "RemoteNotificationConfig"
     private const val PREFS_NAME = "flutter_config_notification_plugins"
@@ -197,9 +203,14 @@ internal object RemoteNotificationConfigStore {
     fun fetchDecodeAndSave(
         context: Context,
         request: RemoteNotificationRequest,
+        shouldSave: () -> Boolean = { true },
     ): DecodedRemoteNotificationConfig? {
         val debug = isDebuggable(context)
         for (attempt in 1..request.maxAttempts) {
+            if (!shouldSave()) {
+                if (debug) logDebug("request discarded because a newer request exists")
+                return null
+            }
             if (debug) {
                 logDebug("request start attempt=$attempt/${request.maxAttempts} url=${request.url}")
                 logJson("request headers", sanitizedHeaders(request.headers))
@@ -219,6 +230,10 @@ internal object RemoteNotificationConfigStore {
                         }.getOrNull()
                 if (decoded != null) {
                     if (debug) logJson("decoded response", decoded.response)
+                    if (!shouldSave()) {
+                        if (debug) logDebug("configuration discarded because a newer request exists")
+                        return null
+                    }
                     if (save(context, decoded)) {
                         if (debug) logDebug("request completed and configuration saved")
                         return decoded
@@ -231,6 +246,10 @@ internal object RemoteNotificationConfigStore {
 
             val shouldRetry = response.statusCode <= 0 || response.statusCode >= 500
             if (!shouldRetry || attempt >= request.maxAttempts) return null
+            if (!shouldSave()) {
+                if (debug) logDebug("request retry cancelled because a newer request exists")
+                return null
+            }
             val delayMillis = request.retryDelayMilliseconds[attempt - 1]
             if (debug) logDebug("request retry scheduled after ${delayMillis}ms")
             try {
@@ -257,6 +276,61 @@ internal object RemoteNotificationConfigStore {
                 }
                 ?: return null
         return runCatching { JSONObject(raw) }.getOrNull()
+    }
+
+    fun snapshot(context: Context): RemoteNotificationConfigSnapshot {
+        val sharedPrefs =
+            context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return RemoteNotificationConfigSnapshot(
+            response = sharedPrefs.getString(KEY_RESPONSE, null),
+            notification = sharedPrefs.getString(KEY_NOTIFICATION, null),
+            fetchedAt = sharedPrefs.getLong(KEY_FETCHED_AT, 0L),
+        )
+    }
+
+    fun restore(
+        context: Context,
+        snapshot: RemoteNotificationConfigSnapshot,
+    ): Boolean {
+        val appContext = context.applicationContext
+        val editor = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        if (snapshot.response == null) {
+            editor.remove(KEY_RESPONSE)
+        } else {
+            editor.putString(KEY_RESPONSE, snapshot.response)
+        }
+        if (snapshot.notification == null) {
+            editor.remove(KEY_NOTIFICATION)
+        } else {
+            editor.putString(KEY_NOTIFICATION, snapshot.notification)
+        }
+        if (snapshot.fetchedAt > 0L) {
+            editor.putLong(KEY_FETCHED_AT, snapshot.fetchedAt)
+        } else {
+            editor.remove(KEY_FETCHED_AT)
+        }
+        val restored = editor.commit()
+        val directBootRestored =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                val directEditor =
+                    appContext.createDeviceProtectedStorageContext()
+                        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit()
+                if (snapshot.notification == null) {
+                    directEditor.remove(KEY_NOTIFICATION)
+                } else {
+                    directEditor.putString(KEY_NOTIFICATION, snapshot.notification)
+                }
+                if (snapshot.fetchedAt > 0L) {
+                    directEditor.putLong(KEY_FETCHED_AT, snapshot.fetchedAt)
+                } else {
+                    directEditor.remove(KEY_FETCHED_AT)
+                }
+                directEditor.commit()
+            } else {
+                true
+            }
+        return restored && directBootRestored
     }
 
     private fun executeRequest(request: RemoteNotificationRequest): HttpResponse {

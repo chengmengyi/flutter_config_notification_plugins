@@ -276,6 +276,15 @@ abstract class FlutterConfigNotificationPluginsPlatform
     throw UnimplementedError('initNotification() has not been implemented.');
   }
 
+  /// 重新拉取并应用远程通知配置。
+  Future<String?> updateNotificationConfig({
+    required Map<String, Object?> remoteRequest,
+  }) {
+    throw UnimplementedError(
+      'updateNotificationConfig() has not been implemented.',
+    );
+  }
+
   /// 显示常驻快捷入口通知。
   Future<void> showPersistentShortcutNotification({
     required String homeText,

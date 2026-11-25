@@ -405,6 +405,19 @@ class FlutterConfigNotificationPlugins {
     );
   }
 
+  /// 重新拉取并应用远程通知配置。
+  ///
+  /// 应在 [initNotification] 首次初始化成功后调用，适用于切换语言等场景。
+  /// 更新成功时会重新对齐已初始化的定时通知、媒体通知、广播通知和悬浮窗，
+  /// 但不会重置安装时间、每日计数或通知间隔记录。
+  Future<NotificationConfigUpdateResult> updateNotificationConfig({
+    required NotificationRemoteRequest remoteRequest,
+  }) async {
+    final value = await FlutterConfigNotificationPluginsPlatform.instance
+        .updateNotificationConfig(remoteRequest: remoteRequest.toMap());
+    return NotificationConfigUpdateResult.fromChannelValue(value);
+  }
+
   /// 显示常驻快捷入口通知。
   Future<void> showPersistentShortcutNotification({
     required String homeText,
