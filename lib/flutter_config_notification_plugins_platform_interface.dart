@@ -161,11 +161,6 @@ abstract class FlutterConfigNotificationPluginsPlatform
     throw UnimplementedError('setTimerOverlayInfo() has not been implemented.');
   }
 
-  /// 更新是否在通知触发前显示媒体通知。
-  Future<void> updateShowMediaTag({required bool showMedia}) {
-    throw UnimplementedError('updateShowMediaTag() has not been implemented.');
-  }
-
   /// 暂停定时悬浮窗；保留配置但取消下一次定时展示。
   Future<void> pauseTimerOverlay() {
     throw UnimplementedError('pauseTimerOverlay() has not been implemented.');
@@ -270,7 +265,6 @@ abstract class FlutterConfigNotificationPluginsPlatform
     String channelName = 'Notifications',
     String? channelDescription,
     String? icon,
-    bool showMedia = true,
     Map<String, Object?>? customLayout,
   }) {
     throw UnimplementedError('initNotification() has not been implemented.');

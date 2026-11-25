@@ -264,7 +264,6 @@ class _MyAppState extends State<MyApp> {
         bigLayoutName: 'large_notification_layout',
         actionText: 'Check',
       ),
-      showMedia: true,
       remoteRequest: NotificationRemoteRequest(
         url: "https://client.docnovapdftoolreaderscanner.com/api/yearlycurler",
         headers: await _getHeaderMap(),

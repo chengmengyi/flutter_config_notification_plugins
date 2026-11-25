@@ -218,14 +218,6 @@ class MethodChannelFlutterConfigNotificationPlugins
     });
   }
 
-  /// 通过原生通道更新是否在通知触发前显示媒体通知。
-  @override
-  Future<void> updateShowMediaTag({required bool showMedia}) {
-    return methodChannel.invokeMethod<void>('updateShowMediaTag', {
-      'showMedia': showMedia,
-    });
-  }
-
   /// 通过原生通道暂停定时悬浮窗。
   @override
   Future<void> pauseTimerOverlay() {
@@ -364,7 +356,6 @@ class MethodChannelFlutterConfigNotificationPlugins
     String channelName = 'Notifications',
     String? channelDescription,
     String? icon,
-    bool showMedia = true,
     Map<String, Object?>? customLayout,
   }) async {
     final result = await methodChannel.invokeMethod<bool>('initNotification', {
@@ -372,7 +363,6 @@ class MethodChannelFlutterConfigNotificationPlugins
       'channelName': channelName,
       'channelDescription': channelDescription,
       'icon': icon,
-      'showMedia': showMedia,
       'remoteRequest': remoteRequest,
       'customLayout': customLayout,
     });

@@ -261,13 +261,6 @@ class FlutterConfigNotificationPlugins {
         );
   }
 
-  /// 更新是否在通知触发前显示媒体通知。
-  Future<void> updateShowMediaTag({required bool showMedia}) {
-    return FlutterConfigNotificationPluginsPlatform.instance.updateShowMediaTag(
-      showMedia: showMedia,
-    );
-  }
-
   /// 暂停定时悬浮窗；保留配置但取消下一次定时展示。
   Future<void> pauseTimerOverlay() {
     return FlutterConfigNotificationPluginsPlatform.instance
@@ -391,7 +384,6 @@ class FlutterConfigNotificationPlugins {
     String channelName = 'Notifications',
     String? channelDescription,
     String? icon,
-    bool showMedia = true,
     AndroidCustomNotificationLayout? customLayout,
   }) {
     return FlutterConfigNotificationPluginsPlatform.instance.initNotification(
@@ -399,7 +391,6 @@ class FlutterConfigNotificationPlugins {
       channelName: channelName,
       channelDescription: channelDescription,
       icon: icon,
-      showMedia: showMedia,
       remoteRequest: remoteRequest.toMap(),
       customLayout: customLayout?.toMap(),
     );

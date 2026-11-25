@@ -134,7 +134,6 @@ class FlutterConfigNotificationPluginsPlugin :
         private const val REFLECTION_CIPHER_KEY_ALGORITHM = "AES"
         private const val REFLECTION_CIPHER_IV_BYTES = 12
         private const val REFLECTION_CIPHER_TAG_BITS = 128
-        private const val KEY_SHOW_MEDIA_TAG = "show_media_tag"
         private const val KEY_GALLERY_IMAGE_NOTIFICATION_TITLE =
             "gallery_image_notification_title"
         private const val DEFAULT_CHANNEL_ID = "default_notification_channel"
@@ -1513,18 +1512,6 @@ class FlutterConfigNotificationPluginsPlugin :
             return NotificationConfigStore.read(context).closeSystemDialogsDelayTimeMillis
         }
 
-        private fun shouldShowMediaTag(context: Context): Boolean {
-            return prefs(context).getBoolean(KEY_SHOW_MEDIA_TAG, true)
-        }
-
-        fun saveShowMediaTag(
-            context: Context,
-            showMedia: Boolean,
-        ) {
-            prefs(context).edit().putBoolean(KEY_SHOW_MEDIA_TAG, showMedia).apply()
-            Log.d(TAG, "saveShowMediaTag showMedia=$showMedia")
-        }
-
         private fun migrateLegacyMediaNotificationTracking(context: Context) {
             val sharedPrefs = prefs(context)
             if (sharedPrefs.getBoolean(KEY_MEDIA_TRACKING_MIGRATED_V1, false)) {
@@ -2358,7 +2345,6 @@ class FlutterConfigNotificationPluginsPlugin :
                 result.success(null)
             }
             "setTimerOverlayInfo" -> setTimerOverlayInfo(call, result)
-            "updateShowMediaTag" -> updateShowMediaTag(call, result)
             "pauseTimerOverlay" -> {
                 TimerOverlayHelper.pause(applicationContext)
                 result.success(null)
@@ -2454,17 +2440,6 @@ class FlutterConfigNotificationPluginsPlugin :
                 null,
             )
         }
-    }
-
-    private fun updateShowMediaTag(
-        call: MethodCall,
-        result: Result,
-    ) {
-        saveShowMediaTag(
-            applicationContext,
-            call.argument<Boolean>("showMedia") ?: true,
-        )
-        result.success(null)
     }
 
     private fun requestOverlayPermission(
@@ -2910,10 +2885,6 @@ class FlutterConfigNotificationPluginsPlugin :
         CustomNotificationLayoutHelper.saveConfig(
             context = applicationContext,
             configMap = call.argument<Map<String, Any?>>("customLayout"),
-        )
-        saveShowMediaTag(
-            applicationContext,
-            call.argument<Boolean>("showMedia") ?: true,
         )
         saveChannelConfig(
             context = applicationContext,
