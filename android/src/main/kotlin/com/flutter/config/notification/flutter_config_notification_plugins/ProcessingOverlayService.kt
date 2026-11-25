@@ -22,7 +22,6 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
 import com.bumptech.glide.Glide
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -152,14 +151,17 @@ class ProcessingOverlayService : Service() {
                 Log.d(TAG, "show skipped, overlay permission missing")
                 return
             }
-            startService(
-                context,
+            val intent =
                 Intent(context, ProcessingOverlayService::class.java).apply {
                     action = ACTION_SHOW
                     putExtra(EXTRA_TASK_ID, taskId)
                     putExtra(EXTRA_TITLE, title)
                     putExtra(EXTRA_PROGRESS, progress)
-                },
+                }
+            Android15OverlayStartCoordinator.startProcessingService(
+                context = context,
+                intent = intent,
+                progress = progress,
             )
         }
 
@@ -173,18 +175,25 @@ class ProcessingOverlayService : Service() {
                 Log.d(TAG, "update skipped, overlay permission missing")
                 return
             }
-            startService(
-                context,
+            val intent =
                 Intent(context, ProcessingOverlayService::class.java).apply {
                     action = ACTION_UPDATE
                     putExtra(EXTRA_TASK_ID, taskId)
                     putExtra(EXTRA_TITLE, title)
                     putExtra(EXTRA_PROGRESS, progress)
-                },
+                }
+            Android15OverlayStartCoordinator.startProcessingService(
+                context = context,
+                intent = intent,
+                progress = progress,
             )
         }
 
         fun close(context: Context) {
+            Android15OverlayStartCoordinator.remove(
+                Android15OverlayStartCoordinator.Kind.PROCESSING,
+                "processing_close",
+            )
             val intent =
                 Intent(context, ProcessingOverlayService::class.java).apply {
                     action = ACTION_CLOSE
@@ -232,7 +241,7 @@ class ProcessingOverlayService : Service() {
             }.getOrDefault(false)
         }
 
-        private fun createLayoutParamsByReflection(
+        internal fun createLayoutParamsByReflection(
             context: Context,
             width: Int,
             height: Int,
@@ -267,7 +276,7 @@ class ProcessingOverlayService : Service() {
             }.getOrNull()
         }
 
-        private fun addViewByReflection(
+        internal fun addViewByReflection(
             context: Context,
             view: View?,
             layoutParams: Any?,
@@ -317,7 +326,7 @@ class ProcessingOverlayService : Service() {
             }.getOrDefault(false)
         }
 
-        private fun removeViewByReflection(
+        internal fun removeViewByReflection(
             context: Context,
             view: View?,
         ): Boolean {
@@ -457,17 +466,6 @@ class ProcessingOverlayService : Service() {
             return FlutterConfigNotificationPluginsPlugin.decryptReflectionString(secret, value)
         }
 
-        private fun startService(
-            context: Context,
-            intent: Intent,
-        ) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                ContextCompat.startForegroundService(context, intent)
-            } else {
-                context.startService(intent)
-            }
-        }
-
         private fun prefs(context: Context): SharedPreferences {
             return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         }
@@ -514,6 +512,7 @@ class ProcessingOverlayService : Service() {
     private var currentTaskId: String = ""
     private var dragFrameCallback: Choreographer.FrameCallback? = null
     private var settleAnimator: ValueAnimator? = null
+    private var foregroundReady: Boolean = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -521,7 +520,13 @@ class ProcessingOverlayService : Service() {
         super.onCreate()
         try {
             ensureForegroundNotification()
+            foregroundReady = true
         } catch (e: Exception) {
+            foregroundReady = false
+            Android15OverlayStartCoordinator.remove(
+                Android15OverlayStartCoordinator.Kind.PROCESSING,
+                "processing_foreground_promotion_failed",
+            )
             Log.e(TAG, "onCreate failed", e)
             stopSelf()
         }
@@ -533,6 +538,18 @@ class ProcessingOverlayService : Service() {
         startId: Int,
     ): Int {
         try {
+            val claimedOverlay =
+                Android15OverlayStartCoordinator.claim(
+                    Android15OverlayStartCoordinator.Kind.PROCESSING,
+                )
+            if (claimedOverlay != null) {
+                adoptPreflightOverlay(claimedOverlay)
+            }
+            if (!foregroundReady) {
+                removeOverlayView()
+                stopSelf()
+                return START_NOT_STICKY
+            }
             val action = intent?.action ?: ACTION_SHOW
             if (action == ACTION_CLOSE) {
                 stopSelf()
@@ -565,7 +582,12 @@ class ProcessingOverlayService : Service() {
 
     override fun onDestroy() {
         try {
+            Android15OverlayStartCoordinator.remove(
+                Android15OverlayStartCoordinator.Kind.PROCESSING,
+                "processing_service_destroyed",
+            )
             removeOverlayView()
+            foregroundReady = false
             clearStoredState()
             isRunning = false
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -621,6 +643,20 @@ class ProcessingOverlayService : Service() {
         } else {
             Log.d(TAG, "ensureOverlayView failed, addViewByReflection returned false")
         }
+    }
+
+    private fun adoptPreflightOverlay(
+        claimedOverlay: Android15OverlayStartCoordinator.ClaimedOverlay,
+    ) {
+        val params = claimedOverlay.layoutParams ?: return
+        val rootView = claimedOverlay.view
+        overlayView = rootView
+        overlayLayoutParams = params
+        logoView = rootView.findViewById(R.id.fln_processing_logo)
+        progressRingView = rootView.findViewById(R.id.fln_processing_overlay_progress_ring)
+        attachOverlayInteractions(rootView, params)
+        bindAppLogo()
+        Log.d(TAG, "adopted Android 15 preflight overlay")
     }
 
     private fun applyOverlaySizes(rootView: View) {

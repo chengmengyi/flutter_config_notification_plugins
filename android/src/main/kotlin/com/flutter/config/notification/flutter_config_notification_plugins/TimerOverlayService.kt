@@ -25,7 +25,6 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
 import com.bumptech.glide.Glide
 import kotlin.math.abs
 
@@ -116,18 +115,24 @@ class TimerOverlayService : Service() {
                         enforceStandaloneDailyLimit,
                     )
                 }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                ContextCompat.startForegroundService(context, intent)
-            } else {
-                context.startService(intent)
-            }
+            Android15OverlayStartCoordinator.startTimerService(
+                context = context,
+                intent = intent,
+                layoutName = layoutName,
+                isBanner = isBanner,
+                bannerContents = bannerContents,
+                title = title,
+                desc = desc,
+                button = button,
+                button2 = button2,
+            )
         }
 
         fun close(context: Context) {
-            if (!isShowing) {
-                Log.d(TAG, "close skipped, no timer overlay showing")
-                return
-            }
+            Android15OverlayStartCoordinator.remove(
+                Android15OverlayStartCoordinator.Kind.TIMER,
+                "timer_close",
+            )
             context.stopService(
                 Intent(context, TimerOverlayService::class.java).apply {
                     action = ACTION_CLOSE
@@ -140,6 +145,7 @@ class TimerOverlayService : Service() {
     private var pendingDisplayContent: TimerOverlayHelper.TimerOverlayDisplayContent? = null
     private var bannerDisplayContents: List<TimerOverlayHelper.TimerOverlayDisplayContent> = emptyList()
     private var buttonPulseAnimator: AnimatorSet? = null
+    private var foregroundReady: Boolean = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -147,7 +153,13 @@ class TimerOverlayService : Service() {
         super.onCreate()
         try {
             ensureForegroundNotification()
+            foregroundReady = true
         } catch (e: Exception) {
+            foregroundReady = false
+            Android15OverlayStartCoordinator.remove(
+                Android15OverlayStartCoordinator.Kind.TIMER,
+                "timer_foreground_promotion_failed",
+            )
             Log.e(TAG, "onCreate failed", e)
             stopSelf()
         }
@@ -174,25 +186,53 @@ class TimerOverlayService : Service() {
         startId: Int,
     ): Int {
         try {
+            if (!foregroundReady) {
+                Android15OverlayStartCoordinator.remove(
+                    Android15OverlayStartCoordinator.Kind.TIMER,
+                    "timer_foreground_not_ready",
+                )
+                stopSelf()
+                return START_NOT_STICKY
+            }
             if (intent?.action == ACTION_CLOSE) {
+                Android15OverlayStartCoordinator.remove(
+                    Android15OverlayStartCoordinator.Kind.TIMER,
+                    "timer_close_command",
+                )
                 stopSelf()
                 return START_NOT_STICKY
             }
             if (FlutterConfigNotificationPluginsPlugin.isDocumentScannerVisible(applicationContext)) {
                 Log.d(TAG, "onStartCommand skipped, document scanner visible")
+                Android15OverlayStartCoordinator.remove(
+                    Android15OverlayStartCoordinator.Kind.TIMER,
+                    "timer_scanner_visible",
+                )
                 stopSelf()
                 return START_NOT_STICKY
             }
             if (!TimerOverlayHelper.canDrawOverlaysByReflection(applicationContext)) {
+                Android15OverlayStartCoordinator.remove(
+                    Android15OverlayStartCoordinator.Kind.TIMER,
+                    "timer_permission_missing",
+                )
                 stopSelf()
                 return START_NOT_STICKY
             }
             val layoutName = intent?.getStringExtra(EXTRA_LAYOUT_NAME).orEmpty()
             val isBanner = intent?.getBooleanExtra(EXTRA_IS_BANNER, false) == true
             if (layoutName.isBlank() && !isBanner) {
+                Android15OverlayStartCoordinator.remove(
+                    Android15OverlayStartCoordinator.Kind.TIMER,
+                    "timer_invalid_layout",
+                )
                 stopSelf()
                 return START_NOT_STICKY
             }
+            val claimedOverlay =
+                Android15OverlayStartCoordinator.claim(
+                    Android15OverlayStartCoordinator.Kind.TIMER,
+                )
             val shown =
                 showOverlay(
                     layoutName = layoutName,
@@ -213,6 +253,7 @@ class TimerOverlayService : Service() {
                             EXTRA_ENFORCE_STANDALONE_DAILY_LIMIT,
                             false,
                         ) ?: false,
+                    claimedOverlay = claimedOverlay,
                 )
             if (!shown) {
                 stopSelf()
@@ -228,7 +269,12 @@ class TimerOverlayService : Service() {
 
     override fun onDestroy() {
         try {
+            Android15OverlayStartCoordinator.remove(
+                Android15OverlayStartCoordinator.Kind.TIMER,
+                "timer_service_destroyed",
+            )
             removeOverlay()
+            foregroundReady = false
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
             } else {
@@ -256,9 +302,16 @@ class TimerOverlayService : Service() {
         continueReadingStr: String?,
         closeOverlayProbability: Int,
         enforceStandaloneDailyLimit: Boolean,
+        claimedOverlay: Android15OverlayStartCoordinator.ClaimedOverlay?,
     ): Boolean {
+        if (claimedOverlay != null) {
+            overlayView = claimedOverlay.view
+            isShowing = true
+            Log.d(TAG, "adopted Android 15 preflight overlay")
+        }
         if (FlutterConfigNotificationPluginsPlugin.isDocumentScannerVisible(applicationContext)) {
             Log.d(TAG, "showOverlay skipped, document scanner visible")
+            if (claimedOverlay != null) removeOverlay()
             return false
         }
         if (!TimerOverlayHelper.canShowOnCurrentDeviceState(applicationContext)) {
@@ -266,13 +319,17 @@ class TimerOverlayService : Service() {
                 TAG,
                 "showOverlay skipped, screen off or device locked keepExisting=$isShowing",
             )
+            if (claimedOverlay != null) removeOverlay()
             return isShowing
         }
         if (enforceStandaloneDailyLimit && !TimerOverlayHelper.canDisplayToday(applicationContext)) {
-            Log.d(TAG, "showOverlay skipped, one day max count reached")
-            return false
+            Log.d(TAG, "showOverlay skipped, one day max count reached keepExisting=$isShowing")
+            if (claimedOverlay != null) removeOverlay()
+            return isShowing
         }
-        removeOverlay()
+        if (claimedOverlay == null) {
+            removeOverlay()
+        }
         val layoutResId = if (isBanner) {
             R.layout.fln_timer_top_banner
         } else {
@@ -291,7 +348,7 @@ class TimerOverlayService : Service() {
                 "shouldReallyClose=${closeDecision.shouldReallyClose}",
         )
         val view =
-            LayoutInflater.from(this).inflate(layoutResId, null, false).apply {
+            (claimedOverlay?.view ?: LayoutInflater.from(this).inflate(layoutResId, null, false)).apply {
                 isClickable = true
                 setOnClickListener {
                     openOverlayContent(layoutName, clickType)
@@ -317,22 +374,23 @@ class TimerOverlayService : Service() {
         }
         try {
             val added =
-                TimerOverlayHelper.addViewByReflection(
-                    context = applicationContext,
-                    view = view,
-                    width = LAYOUT_MATCH_PARENT,
-                    height = LAYOUT_WRAP_CONTENT,
-                    type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        TYPE_APPLICATION_OVERLAY
-                    } else {
-                        TYPE_PHONE
-                    },
-                    flags = FLAG_NOT_FOCUSABLE,
-                    format = FORMAT_TRANSLUCENT,
-                    gravity = if (isBanner) GRAVITY_TOP_CENTER_HORIZONTAL else GRAVITY_CENTER,
-                    x = 0,
-                    y = 0,
-                )
+                claimedOverlay != null ||
+                    TimerOverlayHelper.addViewByReflection(
+                        context = applicationContext,
+                        view = view,
+                        width = LAYOUT_MATCH_PARENT,
+                        height = LAYOUT_WRAP_CONTENT,
+                        type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            TYPE_APPLICATION_OVERLAY
+                        } else {
+                            TYPE_PHONE
+                        },
+                        flags = FLAG_NOT_FOCUSABLE,
+                        format = FORMAT_TRANSLUCENT,
+                        gravity = if (isBanner) GRAVITY_TOP_CENTER_HORIZONTAL else GRAVITY_CENTER,
+                        x = 0,
+                        y = 0,
+                    )
             if (!added) {
                 pendingDisplayContent = null
                 Log.d(TAG, "showOverlay failed, addView reflection returned false")
@@ -352,6 +410,7 @@ class TimerOverlayService : Service() {
             return true
         } catch (e: Exception) {
             pendingDisplayContent = null
+            if (claimedOverlay != null) removeOverlay()
             Log.d(TAG, "showOverlay failed error=${e.message}")
             return false
         }

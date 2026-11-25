@@ -917,45 +917,42 @@ class FlutterConfigNotificationPluginsPlugin :
                             "${effectiveRemoteSource.name.lowercase()}:${remoteSourceKey.orEmpty()}",
                         )
                     if (requested && floating?.onlySendFloatingWindow == true) {
-                        Handler(Looper.getMainLooper()).postDelayed(
-                            {
-                                if (!TimerOverlayService.isOverlayShowing()) {
-                                    showNotification(
-                                        context = context,
-                                        id = id,
-                                        baseId = baseId,
-                                        title = title,
-                                        body = body,
-                                        payload = payload,
-                                        clickPayload = clickPayload,
-                                        debugPayload = debugPayload,
-                                        channelId = channelId,
-                                        channelName = channelName,
-                                        channelDescription = channelDescription,
-                                        priority = priority,
-                                        importance = importance,
-                                        beautyTemplate = beautyTemplate,
-                                        mediaImage = mediaImage,
-                                        customLayoutImageValue = customLayoutImageValue,
-                                        actionText = actionText,
-                                        debugActionText = debugActionText,
-                                        replaceExistingMedia = replaceExistingMedia,
-                                        mediaReplacementKey = mediaReplacementKey,
-                                        recordDisplayedBeforePermission = false,
-                                        dispatchDisplayedAfterNotify = dispatchDisplayedAfterNotify,
-                                        allowTimerOverlayStart = allowTimerOverlayStart,
-                                        quotaType = quotaType,
-                                        suppressWhenAppForeground = suppressWhenAppForeground,
-                                        suppressAnyPayloadWhenAppForeground = suppressAnyPayloadWhenAppForeground,
-                                        remoteSource = effectiveRemoteSource,
-                                        remoteSourceKey = remoteSourceKey,
-                                        skipFloatingWindow = true,
-                                        skipTriggeredMedia = true,
-                                    )
-                                }
-                            },
-                            500L,
-                        )
+                        Android15OverlayStartCoordinator.whenTimerStartSettles {
+                            if (!TimerOverlayService.isOverlayShowing()) {
+                                showNotification(
+                                    context = context,
+                                    id = id,
+                                    baseId = baseId,
+                                    title = title,
+                                    body = body,
+                                    payload = payload,
+                                    clickPayload = clickPayload,
+                                    debugPayload = debugPayload,
+                                    channelId = channelId,
+                                    channelName = channelName,
+                                    channelDescription = channelDescription,
+                                    priority = priority,
+                                    importance = importance,
+                                    beautyTemplate = beautyTemplate,
+                                    mediaImage = mediaImage,
+                                    customLayoutImageValue = customLayoutImageValue,
+                                    actionText = actionText,
+                                    debugActionText = debugActionText,
+                                    replaceExistingMedia = replaceExistingMedia,
+                                    mediaReplacementKey = mediaReplacementKey,
+                                    recordDisplayedBeforePermission = false,
+                                    dispatchDisplayedAfterNotify = dispatchDisplayedAfterNotify,
+                                    allowTimerOverlayStart = allowTimerOverlayStart,
+                                    quotaType = quotaType,
+                                    suppressWhenAppForeground = suppressWhenAppForeground,
+                                    suppressAnyPayloadWhenAppForeground = suppressAnyPayloadWhenAppForeground,
+                                    remoteSource = effectiveRemoteSource,
+                                    remoteSourceKey = remoteSourceKey,
+                                    skipFloatingWindow = true,
+                                    skipTriggeredMedia = true,
+                                )
+                            }
+                        }
                         return false
                     }
                 }
